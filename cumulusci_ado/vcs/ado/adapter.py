@@ -21,6 +21,8 @@ from cumulusci.vcs.models import (
     AbstractRepoCommit,
 )
 
+from cumulusci_ado.utils.ado import parse_repo_url
+
 
 class ADORef(AbstractRef):
     ref: GitRef
@@ -200,10 +202,13 @@ class ADORepository(AbstractRepo):
         self.project_config = config
         self.service_type = kwargs.get("service_type", "azure_devops")
         self.git_client = self.connection.clients.get_git_client()
-        self.repo = self.git_client.get_repository(
-            self.project_config.repo_name, self.project_config.repo_name
-        )  # TODO Get project Name.
-        self.project = self.repo.project
+
+        if self.project_config.repo_url:
+            _owner, repo_name, _host, project = parse_repo_url(
+                self.project_config.repo_url
+            )
+            self.repo = self.git_client.get_repository(repo_name, project)
+            self.project = self.repo.project
 
     @property
     def project_id(self) -> Optional[str]:
