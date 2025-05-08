@@ -2,7 +2,7 @@ services:
   azure_devops:
     description: Configure connection for Azure DevOps Server
     attributes:
-      organization_url:
+      url:
         description: "Azure DevOps organization url (Example: dev.azure.com/YOURORG)."
         required: True
       token:

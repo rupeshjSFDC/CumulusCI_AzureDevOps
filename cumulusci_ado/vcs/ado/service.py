@@ -12,7 +12,7 @@ from cumulusci_ado.vcs.ado import ADORepository
 
 class AzureDevOpsService(VCSService):
     service_type: str = "azure_devops"
-    _repo: Optional[ADORepository] = None
+    _repo: ADORepository
 
     def __init__(self, config: BaseProjectConfig, name: Optional[str] = None, **kwargs):
         """Initializes the ADO service with the given project configuration.
@@ -29,7 +29,7 @@ class AzureDevOpsService(VCSService):
     @classmethod
     def validate_service(cls, options: dict, keychain) -> dict:
         personal_access_token = options["token"]
-        organization_url = options["organization_url"]
+        organization_url = options["url"]
 
         cls.validate_duplicate_service(keychain, organization_url)
 
@@ -50,7 +50,7 @@ class AzureDevOpsService(VCSService):
         if not services:
             return True
 
-        hosts = [service.organization_url for service in services]
+        hosts = [service.url for service in services]
         if hosts.count(organization_url) > 1:
             raise AzureDevOpsAuthenticationError(
                 f"More than one Azure Devops service configured for domain {organization_url}."
@@ -61,10 +61,11 @@ class AzureDevOpsService(VCSService):
     def _authenticate(
         token: str, org_url: str, session: Optional[requests.Session] = None
     ) -> Connection:
+        """Authenticate to Azure DevOps using a personal access token."""
         organization_url = f"https://{org_url}"
 
         credentials = BasicAuthentication("", token)
-        if session:
+        if session is not None:
             credentials.signed_session(session)
         connection = Connection(base_url=organization_url, creds=credentials)
 
@@ -77,11 +78,9 @@ class AzureDevOpsService(VCSService):
     def get_api_connection(
         cls, service_config, session: Optional[requests.Session] = None
     ) -> Connection:
-        return cls._authenticate(
-            service_config.token, service_config.organization_url, session
-        )
+        return cls._authenticate(service_config.token, service_config.url, session)
 
-    def get_repository(self) -> Optional[ADORepository]:
+    def get_repository(self, options: dict = {}) -> Optional[ADORepository]:
         """Returns the GitHub repository."""
         if self._repo is None:
             self._repo = ADORepository(
@@ -90,5 +89,7 @@ class AzureDevOpsService(VCSService):
                 logger=self.logger,
                 service_type=self.service_type,
                 service_config=self.service_config,
+                options=options,
             )
+            self._repo._init_repo()
         return self._repo
