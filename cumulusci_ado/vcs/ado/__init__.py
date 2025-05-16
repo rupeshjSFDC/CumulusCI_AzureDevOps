@@ -4,6 +4,7 @@ from cumulusci_ado.vcs.ado.adapter import (
     ADOComparison,
     ADOPullRequest,
     ADORef,
+    ADORelease,
     ADORepository,
     ADOTag,
 )
@@ -18,4 +19,5 @@ __all__ = (
     "ADOCommit",
     "ADOBranch",
     "ADOPullRequest",
+    "ADORelease",
 )

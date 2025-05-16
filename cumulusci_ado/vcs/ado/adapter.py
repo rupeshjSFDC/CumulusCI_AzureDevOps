@@ -1,4 +1,6 @@
 import time
+from datetime import UTC, datetime
+from re import Pattern
 from typing import Optional, Union
 
 from azure.devops.connection import Connection
@@ -8,6 +10,7 @@ from azure.devops.v7_0.git.models import (
     GitAnnotatedTag,
     GitBaseVersionDescriptor,
     GitBranchStats,
+    GitCommit,
     GitCommitDiffs,
     GitObject,
     GitPullRequest,
@@ -26,6 +29,7 @@ from cumulusci.vcs.models import (
     AbstractGitTag,
     AbstractPullRequest,
     AbstractRef,
+    AbstractRelease,
     AbstractRepo,
     AbstractRepoCommit,
 )
@@ -45,11 +49,16 @@ class ADORef(AbstractRef):
 
 
 class ADOTag(AbstractGitTag):
-    tag: Optional[GitAnnotatedTag]
+    tag: GitAnnotatedTag
 
-    def __init__(self, tag: GitAnnotatedTag, **kwargs) -> None:
-        super().__init__(tag, **kwargs)
-        self.sha: Optional[str] = self.tag.object_id if self.tag else None
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.sha = self.tag.object_id or "" if self.tag else ""
+
+    @property
+    def message(self) -> str:
+        """Gets the message of the tag."""
+        return self.tag.message or "" if self.tag else ""
 
 
 class ADOComparison(AbstractComparison):
@@ -108,9 +117,18 @@ class ADOComparison(AbstractComparison):
 
 
 class ADOCommit(AbstractRepoCommit):
-    """ADO comparison object for comparing commits."""
+    """ADO commit object for representing a commit in the repository."""
 
-    pass
+    commit: GitCommit
+
+    def get_statuses(self, context: str, regex_match: Pattern[str]) -> Optional[str]:
+        # TODO: Implement the logic to get the status of the commit
+        # for status in self.commit.status().statuses:
+        #     if status.state == "success" and status.context == context:
+        #         match = regex_match.search(status.description)
+        #         if match:
+        #             return match.group(1)
+        return None
 
 
 class ADOBranch(AbstractBranch):
@@ -364,6 +382,94 @@ class ADOPullRequest(AbstractPullRequest):
             message = f"Unexpected error during PR update: {str(ex)}"
             raise Exception(message)
 
+    @property
+    def title(self) -> str:
+        """Gets the pull request title."""
+        return self.pull_request.title or ""
+
+    @property
+    def merged_at(self) -> datetime:
+        """Gets the merged date of the short pull request."""
+        return self.pull_request.closed_date or datetime.now(UTC)
+
+
+class Release:
+    @property
+    def tag_name(self) -> str:
+        """Gets the tag name of the release."""
+        return self.tag_name or ""
+
+    @property
+    def body(self) -> str:
+        """Gets the body of the release."""
+        return self.body or ""
+
+    @property
+    def prerelease(self) -> bool:
+        """Checks if the release is a pre-release."""
+        return self.prerelease or False
+
+    @property
+    def name(self) -> str:
+        """Gets the name of the release."""
+        return self.name or ""
+
+    @property
+    def html_url(self) -> str:
+        """Gets the HTML URL of the release."""
+        return self.html_url or ""
+
+    @property
+    def created_at(self) -> datetime:
+        """Gets the creation date of the release."""
+        return self.created_at or datetime.now(UTC)
+
+    @property
+    def draft(self) -> bool:
+        """Checks if the release is a draft."""
+        return self.draft or False
+
+
+class ADORelease(AbstractRelease):
+    """Azure DevOps release object for creating and managing releases."""
+
+    release: "Release"
+
+    @property
+    def tag_name(self) -> str:
+        """Gets the tag name of the release."""
+        return self.release.tag_name if self.release else ""
+
+    @property
+    def body(self) -> Union[str, None]:
+        """Gets the body of the release."""
+        return self.release.body if self.release else None
+
+    @property
+    def prerelease(self) -> bool:
+        """Checks if the release is a pre-release."""
+        return self.release.prerelease if self.release else False
+
+    @property
+    def name(self) -> str:
+        """Gets the name of the release."""
+        return self.release.name if self.release else ""
+
+    @property
+    def html_url(self) -> str:
+        """Gets the HTML URL of the release."""
+        return self.release.html_url if self.release else ""
+
+    @property
+    def created_at(self) -> Optional[datetime]:
+        """Gets the creation date of the release."""
+        return self.release.created_at if self.release else None
+
+    @property
+    def draft(self) -> bool:
+        """Checks if the release is a draft."""
+        return self.release.draft if self.release else False
+
 
 class ADORepository(AbstractRepo):
 
@@ -381,6 +487,7 @@ class ADORepository(AbstractRepo):
         self.connection = connection
         self.project_config = config
         self.service_type = kwargs.get("service_type", "azure_devops")
+        self._service_config = kwargs.get("service_config")
         self.repo = None
         self.project = None
 
@@ -405,6 +512,21 @@ class ADORepository(AbstractRepo):
         if self.project is None:
             raise ValueError("Project is not set. Cannot access its ID.")
         return self.project.id
+
+    @property
+    def service_config(self):
+        if not self._service_config and self.project_config.keychain is not None:
+            self._service_config = self.project_config.keychain.get_service(
+                self.service_type
+            )
+        return self._service_config
+
+    @property
+    def owner_login(self) -> str:
+        """Returns the owner login of the repository."""
+        # TODO: Implement the logic to get the owner login from ADO
+        # return self.repo.owner.login if self.repo else ""
+        return ""
 
     def get_ref_for_tag(self, tag_name: str) -> Optional[ADORef]:
         """Gets a Reference object for the tag with the given name"""
@@ -560,3 +682,145 @@ class ADORepository(AbstractRepo):
             options=self.options,
         )
         return pull_request
+
+    def get_commit(self, commit_sha: str) -> ADOCommit:
+        """Given a SHA1 hash, retrieve a Commit object from the REST API."""
+        # TODO: Implement the logic to get the commit from ADO
+        # try:
+        #     commit = self.repo.commit(commit_sha)
+        #     return ADOCommit(commit=commit)
+        # except (NotFoundError, UnprocessableEntity):
+        #     # GitHub returns 422 for nonexistent commits in at least some circumstances.
+        #     raise GithubApiNotFoundError(
+        #         f"Could not find commit {commit_sha} on GitHub"
+        #     )
+        return ADOCommit()
+
+    def release_from_tag(self, tag_name: str) -> ADORelease:
+        """Fetches a release from the given tag name."""
+        # TODO: Implement the logic to fetch a release from ADO
+        # try:
+        #     release: Release = self.repo.release_from_tag(tag_name)
+        # except NotFoundError:
+        #     message = f"Release for {tag_name} not found"
+        #     raise GithubApiNotFoundError(message)
+        return ADORelease()
+
+    def default_branch(self) -> Optional[ADOBranch]:
+        """Returns the default branch of the repository."""
+        # TODO: Implement the logic to get the default branch from ADO
+        # return ADOBranch(self, self.repo.default_branch) if self.repo else None
+        return ADOBranch(self, "")
+
+    def archive(self, format: str, zip_content: Union[str, object], ref=None) -> bytes:
+        """Archives the repository content as a zip file."""
+        # TODO: Implement the logic to archive the repository content
+        # try:
+        #     archive = self.repo.archive(format, zip_content, ref)
+        #     return archive
+        # except NotFoundError:
+        #     raise GithubApiNotFoundError(
+        #         f"Could not find archive for {zip_content} for service {self.service_type}"
+        #     )
+        return b""
+
+    def full_name(self) -> str:
+        """Returns the full name of the repository."""
+        # return self.repo.full_name if self.repo else ""
+        # TODO: Implement the logic to get the full name of the repository
+        return ""
+
+    def create_release(
+        self,
+        tag_name: str,
+        name: str = "",
+        body: str = "",
+        draft: bool = False,
+        prerelease: bool = False,
+    ) -> ADORelease:
+        """Creates a release on the given repository."""
+        # TODO: Implement the logic to create a release on ADO
+        # try:
+        #     release = self.repo.create_release(
+        #         tag_name, name=name, body=body, draft=draft, prerelease=prerelease
+        #     )
+        #     return GitHubRelease(release=release)
+        # except NotFoundError:
+        #     raise GithubApiNotFoundError(
+        #         f"Could not create release for {tag_name} on GitHub"
+        #     )
+        return ADORelease()
+
+    def releases(self) -> list[ADORelease]:
+        """Fetches all releases from the given repository."""
+        # TODO: Implement the logic to fetch all releases from ADO
+        # try:
+        #     releases = self.repo.releases()
+        #     return [GitHubRelease(release=release) for release in releases]
+        # except NotFoundError:
+        #     raise GithubApiNotFoundError("Could not find releases on GitHub")
+        # except UnprocessableEntity:
+        #     raise GithubApiNotFoundError(
+        #         "Could not find releases on GitHub. Check if the repository is archived."
+        #     )
+        # except GitHubError as e:
+        #     if e.code == http.client.UNAUTHORIZED:
+        #         raise GithubApiNotFoundError(
+        #             "Could not find releases on GitHub. Check your authentication."
+        #         )
+        #     else:
+        #         raise GithubApiNotFoundError(
+        #             f"Could not find releases on GitHub: {e.message}"
+        #         )
+        # except Exception as e:
+        #     raise GithubApiNotFoundError(
+        #         f"An unexpected error occurred while fetching releases: {str(e)}"
+        #     )
+        return []
+
+    def latest_release(self) -> Optional[ADORelease]:
+        """Fetches the latest release from the given repository."""
+        # TODO: Implement the logic to fetch the latest release from ADO
+        # release = self.repo.latest_release()
+        # if release:
+        #     return GitHubRelease(release=release)
+        return None
+
+    def has_issues(self) -> bool:
+        """Checks if the repository has issues enabled."""
+        # TODO: Implement the logic to check if issues are enabled on ADO
+        # return self.repo.has_issues() if self.repo else False
+        return False
+
+    def get_pull_requests_by_commit(self, commit_sha) -> list[ADOPullRequest]:
+        """Fetches all pull requests associated with the given commit SHA."""
+        # TODO: Implement the logic to fetch pull requests by commit SHA
+        # endpoint = (
+        #     self.github.session.base_url
+        #     + f"/repos/{self.repo.owner.login}/{self.repo.name}/commits/{commit_sha}/pulls"
+        # )
+        # response = self.github.session.get(
+        #     endpoint, headers={"Accept": "application/vnd.github.groot-preview+json"}
+        # )
+        # json_list = safe_json_from_response(response)
+
+        # for json in json_list:
+        #     json["body_html"] = ""
+        #     json["body_text"] = ""
+
+        # pull_requests = [
+        #     GitHubPullRequest(
+        #         repo=self.repo, pull_request=ShortPullRequest(json, self.github)
+        #     )
+        #     for json in json_list
+        # ]
+        # return pull_requests
+        return []
+
+    def get_pr_issue_labels(self, pull_request: ADOPullRequest) -> list[str]:
+        """Fetches all labels associated with the given pull request."""
+        # TODO: Implement the logic to fetch labels from ADO
+        # issue: ShortIssue = self.repo.issue(pull_request.number)
+        # labels: ShortLabel = issue.labels()
+        # return [label.name for label in labels] if labels else []
+        return []

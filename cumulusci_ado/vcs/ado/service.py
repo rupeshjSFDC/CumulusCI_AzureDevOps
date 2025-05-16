@@ -3,11 +3,17 @@ from typing import Optional
 import requests
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsAuthenticationError
-from cumulusci.core.config.project_config import BaseProjectConfig
+from cumulusci.core.config import BaseProjectConfig, ServiceConfig
+from cumulusci.tasks.github.util import CommitDir
 from cumulusci.vcs.base import VCSService
 from msrest.authentication import BasicAuthentication
 
-from cumulusci_ado.vcs.ado import ADORepository
+from cumulusci_ado.utils.ado import parse_repo_url
+from cumulusci_ado.vcs.ado import ADORelease, ADORepository
+from cumulusci_ado.vcs.ado.generator import (
+    ADOParentPullRequestNotesGenerator,
+    ADOReleaseNotesGenerator,
+)
 
 
 class AzureDevOpsService(VCSService):
@@ -23,6 +29,7 @@ class AzureDevOpsService(VCSService):
         """
         super().__init__(config, name, **kwargs)
         # Set azure variables
+        self.repo_url = kwargs.get("repository_url", self.config.repo_url)
         self.connection = self.__class__.get_api_connection(self.service_config)
         self.core_client = self.connection.clients.get_core_client()
 
@@ -80,6 +87,43 @@ class AzureDevOpsService(VCSService):
     ) -> Connection:
         return cls._authenticate(service_config.token, service_config.url, session)
 
+    @classmethod
+    def get_service_for_url(
+        cls, project_config: BaseProjectConfig, url: str, options: dict = {}
+    ) -> Optional["AzureDevOpsService"]:
+        """Returns the service configuration for the given URL."""
+        _owner, _repo_name, host, project = parse_repo_url(url)
+        configured_services: list[ServiceConfig] = []
+
+        if project_config.keychain is not None:
+            # Check if the service is already configured in the keychain
+            configured_services = project_config.keychain.get_services_for_type(
+                cls.service_type
+            )
+
+        service_by_host = {service.url: service for service in configured_services}
+
+        azure_url = f"https://{host}/{project}"
+
+        # Check when connecting to server, but not when creating new service as this would always catch
+        if azure_url is not None and list(service_by_host.keys()).count(azure_url) == 0:
+            project_config.logger.info(
+                f"No Azure DevOps service configured for domain {azure_url}."
+            )
+            return None
+
+        if azure_url is not None:
+            service_config = service_by_host[azure_url]
+
+        vcs_service = AzureDevOpsService(
+            project_config,
+            name=service_config.name,
+            service_config=service_config,
+            logger=project_config.logger,
+            repository_url=url,
+        )
+        return vcs_service
+
     def get_repository(self, options: dict = {}) -> Optional[ADORepository]:
         """Returns the GitHub repository."""
         if self._repo is None:
@@ -93,3 +137,61 @@ class AzureDevOpsService(VCSService):
             )
             self._repo._init_repo()
         return self._repo
+
+    def get_committer(self, repo: ADORepository) -> CommitDir:
+        """Returns the committer for the Azure DevOps repository."""
+        # TODO: Implement the committer logic
+        return CommitDir(repo.repo, logger=self.logger)
+
+    def markdown(
+        self, release: ADORelease, mode: str = "gfm", context: str = ""
+    ) -> str:
+        """Converts the given text to Azure DevOps-flavored Markdown."""
+        release_html = ""
+        # TODO: Implement the markdown logic
+        # self.github.markdown(
+        #     release,
+        #     mode=mode,
+        #     context=context,
+        # )
+        return release_html
+
+    def release_notes_generator(self, options: dict) -> ADOReleaseNotesGenerator:
+        github_info = {
+            "github_owner": self.config.repo_owner,
+            "github_repo": self.config.repo_name,
+            "github_username": self.service_config.username,
+            "github_password": self.service_config.password,
+            "default_branch": self.config.project__git__default_branch,
+            "prefix_beta": self.config.project__git__prefix_beta,
+            "prefix_prod": self.config.project__git__prefix_release,
+        }
+
+        generator = ADOReleaseNotesGenerator(
+            self.core_client,
+            github_info,
+            self.config.project__git__release_notes__parsers.values(),
+            options["tag"],
+            options.get("last_tag"),
+            options.get("link_pr", False),
+            options.get("publish", False),
+            False,  # self.get_repository().has_issues
+            options.get("include_empty", False),
+            version_id=options.get("version_id"),
+            trial_info=options.get("trial_info", False),
+            sandbox_date=options.get("sandbox_date", None),
+            production_date=options.get("production_date", None),
+        )
+
+        # TODO: Implement the generator logic
+
+        return generator
+
+    def parent_pr_notes_generator(
+        self, repo: ADORepository
+    ) -> ADOParentPullRequestNotesGenerator:
+        """Returns the parent pull request notes generator for the ADO repository."""
+        # TODO: Implement the parent PR notes generator logic
+        return ADOParentPullRequestNotesGenerator(
+            self.core_client, repo.repo, self.config
+        )
