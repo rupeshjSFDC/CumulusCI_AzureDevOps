@@ -18,7 +18,7 @@ from cumulusci_ado.vcs.ado.generator import (
 
 class AzureDevOpsService(VCSService):
     service_type: str = "azure_devops"
-    _repo: ADORepository
+    _repo: Optional[ADORepository]
 
     def __init__(self, config: BaseProjectConfig, name: Optional[str] = None, **kwargs):
         """Initializes the ADO service with the given project configuration.
@@ -32,6 +32,7 @@ class AzureDevOpsService(VCSService):
         self.repo_url = kwargs.get("repository_url", self.config.repo_url)
         self.connection = self.__class__.get_api_connection(self.service_config)
         self.core_client = self.connection.clients.get_core_client()
+        self._repo = None
 
     @classmethod
     def validate_service(cls, options: dict, keychain) -> dict:

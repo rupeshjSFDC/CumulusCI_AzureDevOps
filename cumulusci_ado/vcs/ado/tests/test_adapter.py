@@ -501,3 +501,52 @@ class TestADOBranch:  # ADOBranch methods also make SDK calls
 
         assert ado_branch.branch is not None
         assert ado_branch.branch.name == f"refs/heads/{branch_name_to_get}"
+
+
+class TestADORepositoryFileCommit:
+    def test_commit_file_to_branch(self, ado_repository_instance: ADORepository):
+        # Arrange
+        ado_repository_instance.git_client.create_push = MagicMock()
+        ado_repository_instance.get_latest_commit_sha_on_branch = MagicMock(
+            return_value="abc123sha"
+        )
+        branch_name = "main"
+        file_path = "RELEASE_NOTES/v1.2.3.md"
+        file_content = "Release notes content"
+        commit_message = "Add release notes for v1.2.3"
+
+        # Act
+        ado_repository_instance.commit_file_to_branch(
+            branch_name, file_path, file_content, commit_message
+        )
+
+        # Assert
+        ado_repository_instance.git_client.create_push.assert_called_once()
+        push_payload = ado_repository_instance.git_client.create_push.call_args[0][0]
+        assert push_payload["commits"][0]["comment"] == commit_message
+        assert (
+            push_payload["commits"][0]["changes"][0]["item"]["path"] == f"/{file_path}"
+        )
+        assert (
+            push_payload["commits"][0]["changes"][0]["newContent"]["content"]
+            == file_content
+        )
+        assert push_payload["refUpdates"][0]["name"] == f"refs/heads/{branch_name}"
+        assert push_payload["refUpdates"][0]["oldObjectId"] == "abc123sha"
+
+    def test_get_latest_commit_sha_on_branch(
+        self, ado_repository_instance: ADORepository
+    ):
+        # Arrange
+        mock_branch = MagicMock()
+        mock_branch.commit.commit_id = "sha-latest-commit"
+        ado_repository_instance.git_client.get_branch = MagicMock(
+            return_value=mock_branch
+        )
+        branch_name = "main"
+
+        # Act
+        sha = ado_repository_instance.get_latest_commit_sha_on_branch(branch_name)
+
+        # Assert
+        assert sha == "sha-latest-commit"

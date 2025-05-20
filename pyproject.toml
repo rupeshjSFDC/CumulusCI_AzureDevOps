@@ -11,6 +11,8 @@ dependencies = [
     "cumulusci>=4.3.0.dev0",
     "azure-devops",
     "requests",
+    "humanfriendly",
+    "distro"
 ]
 requires-python = ">=3.11"
 

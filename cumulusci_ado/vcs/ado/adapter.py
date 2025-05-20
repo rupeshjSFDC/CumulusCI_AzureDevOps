@@ -1,10 +1,18 @@
+import os
 import time
 from datetime import UTC, datetime
 from re import Pattern
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsClientError, AzureDevOpsServiceError
+from azure.devops.v7_0.feed.models import (
+    Feed,
+    FeedView,
+    MinimalPackageVersion,
+    Package,
+    PackageVersion,
+)
 from azure.devops.v7_0.git.git_client import GitClient
 from azure.devops.v7_0.git.models import (
     GitAnnotatedTag,
@@ -22,7 +30,10 @@ from azure.devops.v7_0.git.models import (
     GitVersionDescriptor,
     TeamProjectReference,
 )
+from azure.devops.v7_0.upack_api.models import JsonPatchOperation, PackageVersionDetails
 from cumulusci.core.config.project_config import BaseProjectConfig
+from cumulusci.core.config.util import get_devhub_config
+from cumulusci.salesforce_api.utils import get_simple_salesforce_connection
 from cumulusci.vcs.models import (
     AbstractBranch,
     AbstractComparison,
@@ -34,7 +45,8 @@ from cumulusci.vcs.models import (
     AbstractRepoCommit,
 )
 
-from cumulusci_ado.utils.ado import parse_repo_url
+from cumulusci_ado.utils.ado import parse_repo_url, publish_package
+from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 
 
 class ADORef(AbstractRef):
@@ -393,82 +405,90 @@ class ADOPullRequest(AbstractPullRequest):
         return self.pull_request.closed_date or datetime.now(UTC)
 
 
-class Release:
-    @property
-    def tag_name(self) -> str:
-        """Gets the tag name of the release."""
-        return self.tag_name or ""
+# class Release(Package):
+#     @property
+#     def tag_name(self) -> str:
+#         """Gets the tag name of the release."""
+#         return self.tag_name or ""
 
-    @property
-    def body(self) -> str:
-        """Gets the body of the release."""
-        return self.body or ""
+#     @property
+#     def body(self) -> str:
+#         """Gets the body of the release."""
+#         return self.body or ""
 
-    @property
-    def prerelease(self) -> bool:
-        """Checks if the release is a pre-release."""
-        return self.prerelease or False
+#     @property
+#     def prerelease(self) -> bool:
+#         """Checks if the release is a pre-release."""
+#         return self.prerelease or False
 
-    @property
-    def name(self) -> str:
-        """Gets the name of the release."""
-        return self.name or ""
+#     @property
+#     def name(self) -> str:
+#         """Gets the name of the release."""
+#         return self.name or ""
 
-    @property
-    def html_url(self) -> str:
-        """Gets the HTML URL of the release."""
-        return self.html_url or ""
+#     @property
+#     def html_url(self) -> str:
+#         """Gets the HTML URL of the release."""
+#         return self.html_url or ""
 
-    @property
-    def created_at(self) -> datetime:
-        """Gets the creation date of the release."""
-        return self.created_at or datetime.now(UTC)
+#     @property
+#     def created_at(self) -> datetime:
+#         """Gets the creation date of the release."""
+#         return self.created_at or datetime.now(UTC)
 
-    @property
-    def draft(self) -> bool:
-        """Checks if the release is a draft."""
-        return self.draft or False
+#     @property
+#     def draft(self) -> bool:
+#         """Checks if the release is a draft."""
+#         return self.draft or False
 
 
 class ADORelease(AbstractRelease):
     """Azure DevOps release object for creating and managing releases."""
 
-    release: "Release"
+    release: "PackageVersion"
 
     @property
     def tag_name(self) -> str:
         """Gets the tag name of the release."""
-        return self.release.tag_name if self.release else ""
+        return self.release.version or "" if self.release else ""
 
     @property
     def body(self) -> Union[str, None]:
         """Gets the body of the release."""
-        return self.release.body if self.release else None
+        return self.release.package_description if self.release else None
 
     @property
     def prerelease(self) -> bool:
         """Checks if the release is a pre-release."""
-        return self.release.prerelease if self.release else False
+        return any(
+            view
+            for view in self.release.views or []
+            if view.type == "release" and view.name.lower() == "prerelease"
+        )
 
     @property
     def name(self) -> str:
         """Gets the name of the release."""
-        return self.release.name if self.release else ""
+        return self.release.version or "" if self.release else ""
 
     @property
     def html_url(self) -> str:
         """Gets the HTML URL of the release."""
-        return self.release.html_url if self.release else ""
+        return self.release.url or "" if self.release else ""
 
     @property
     def created_at(self) -> Optional[datetime]:
         """Gets the creation date of the release."""
-        return self.release.created_at if self.release else None
+        return self.release.publish_date if self.release else None
 
     @property
     def draft(self) -> bool:
         """Checks if the release is a draft."""
-        return self.release.draft if self.release else False
+        return any(
+            view
+            for view in self.release.views or []
+            if view.type == "implicit" and view.name.lower() == "local"
+        )
 
 
 class ADORepository(AbstractRepo):
@@ -490,14 +510,35 @@ class ADORepository(AbstractRepo):
         self._service_config = kwargs.get("service_config")
         self.repo = None
         self.project = None
+        self._package_name = kwargs.get("package_name", "")
+        self.api_version = kwargs.get("api_version", None)
+        self._tooling = None
+        self._feed_client = None
+        self._package: Optional[Package] = None
 
     def _init_repo(self) -> None:
+        """Initializes the repository object."""
+        repo_url = self.options.get("repository_url", self.project_config.repo_url)
+        if repo_url is not None:
+            _repo_owner, _repo_name, _host, _project = parse_repo_url(repo_url)
+
+        self.repo_owner = (
+            _repo_owner
+            or self.options.get("repo_owner")
+            or self.project_config.repo_owner
+            or ""
+        )
+        self.repo_name = (
+            _repo_name
+            or self.options.get("repo_name")
+            or self.project_config.repo_name
+            or ""
+        )
+
         self.git_client = self.connection.clients.get_git_client()
 
-        if self.project_config.repo_url:
-            _, repo_name, _, project = parse_repo_url(self.project_config.repo_url)
-            self.repo = self.git_client.get_repository(repo_name, project)
-            self.project = self.repo.project if self.repo else None
+        self.repo = self.git_client.get_repository(self.repo_name, _project)
+        self.project = self.repo.project if self.repo else None
 
     @property
     def id(self) -> Optional[str]:
@@ -528,6 +569,58 @@ class ADORepository(AbstractRepo):
         # return self.repo.owner.login if self.repo else ""
         return ""
 
+    @property
+    def package_name(self) -> str:
+        """Returns the package name of the repository."""
+        if self._package_name:
+            return self._package_name
+
+        # Get the package name from version_id from options.
+        version_id = self.options.get("version_id")
+        if version_id is not None:
+            res = self.tooling.query(
+                f"SELECT Id, Name, SubscriberPackageId FROM SubscriberPackageVersion WHERE Id = '{version_id}'"
+            )
+            if res["size"] < 1:
+                return ""
+
+            subscriber_id = res["records"][0]["SubscriberPackageId"]
+
+            res = self.tooling.query(
+                f"SELECT Id, Name FROM SubscriberPackage WHERE Id = '{subscriber_id}'"
+            )
+
+            if res["size"] > 0:
+                self._package_name = res["records"][0]["Name"].replace(" ", "-").lower()
+
+                self.logger.info(
+                    f"Found SubscriberPackage {self._package_name} for the version id {self.options.get('version_id')}."
+                )
+
+        return self._package_name
+
+    @property
+    def feed_name(self) -> str:
+        return f"{self.package_name} Feed".replace(" ", "-").lower()
+
+    @property
+    def feed_client(self):
+        if self._feed_client is None:
+            self._feed_client = self.connection.clients.get_feed_client()
+        return self._feed_client
+
+    @property
+    def tooling(self):
+        if self._tooling is None:
+            self._tooling = get_simple_salesforce_connection(
+                self.project_config,
+                get_devhub_config(self.project_config),
+                api_version=self.api_version
+                or self.project_config.project__package__api_version,
+                base_url="tooling",
+            )
+        return self._tooling
+
     def get_ref_for_tag(self, tag_name: str) -> Optional[ADORef]:
         """Gets a Reference object for the tag with the given name"""
         try:
@@ -541,22 +634,22 @@ class ADORepository(AbstractRepo):
             )
 
         except Exception as e:
-            raise AzureDevOpsClientError(
+            raise ADOApiNotFoundError(
                 f"Could not find reference for 'tags/{tag_name}' on ADO. Error: {str(e)}"
             )
 
         if len(refs) > 1:
-            raise AzureDevOpsClientError(f"More than one tag found for {tag_name}.")
+            raise ADOApiNotFoundError(f"More than one tag found for {tag_name}.")
 
         if len(refs) == 0:
-            raise AzureDevOpsClientError(f"Could not find tag {tag_name}.")
+            raise ADOApiNotFoundError(f"Could not find tag {tag_name}.")
 
         ref = refs[0]
 
         if ref.peeled_object_id is None:
             msg = f"Could not find tag '{tag_name}' with SHA {ref.object_id} on ADO."
             msg += f"\n{tag_name} is not an annotated tag."
-            raise AzureDevOpsClientError(msg)
+            raise ADOApiNotFoundError(msg)
 
         return ADORef(ref=ref)
 
@@ -580,7 +673,13 @@ class ADORepository(AbstractRepo):
         return ADOTag(tag=annotatedTag)
 
     def create_tag(
-        self, tag_name: str, message: str, sha: str, obj_type: str, tagger: dict = {}
+        self,
+        tag_name: str,
+        message: str,
+        sha: str,
+        obj_type: str,
+        tagger: dict = {},
+        lightweight: bool = False,
     ) -> ADOTag:
         # Create a tag on the given repository
 
@@ -685,26 +784,65 @@ class ADORepository(AbstractRepo):
 
     def get_commit(self, commit_sha: str) -> ADOCommit:
         """Given a SHA1 hash, retrieve a Commit object from the REST API."""
-        # TODO: Implement the logic to get the commit from ADO
-        # try:
-        #     commit = self.repo.commit(commit_sha)
-        #     return ADOCommit(commit=commit)
-        # except (NotFoundError, UnprocessableEntity):
-        #     # GitHub returns 422 for nonexistent commits in at least some circumstances.
-        #     raise GithubApiNotFoundError(
-        #         f"Could not find commit {commit_sha} on GitHub"
-        #     )
-        return ADOCommit()
+        try:
+            commit: GitCommit = self.git_client.get_commit(
+                commit_sha, self.id, project=self.project_id
+            )
+            return ADOCommit(commit=commit)
+        except AzureDevOpsServiceError:
+            raise ADOApiNotFoundError(
+                f"Could not find commit {commit_sha} on Azure DevOps"
+            )
+
+    def get_package(self) -> Optional[Package]:
+        """Fetches a package from the given repository."""
+        if self._package:
+            return self._package
+
+        artifacts: list[Package] = self.feed_client.get_packages(
+            self.feed_name,
+            project=self.project_id,
+            package_name_query=self.package_name,
+            include_all_versions=True,
+        )
+        pkgs: list[Package] = [
+            pkg for pkg in artifacts if pkg.name == self.package_name
+        ]
+        if not pkgs:
+            return None
+        self._package = pkgs[0]
+        return self._package
+
+    def get_version_package(
+        self, version_name: str
+    ) -> Tuple[Optional[MinimalPackageVersion], Optional[Package]]:
+        """Fetches a version from the given repository."""
+        pkg = self.get_package()
+        if not pkg:
+            return None, None
+
+        versions: list[MinimalPackageVersion] = [
+            version for version in pkg.versions or [] if version.version == version_name
+        ]
+        if not versions:
+            return None, pkg
+        return versions[0], pkg
 
     def release_from_tag(self, tag_name: str) -> ADORelease:
         """Fetches a release from the given tag name."""
-        # TODO: Implement the logic to fetch a release from ADO
-        # try:
-        #     release: Release = self.repo.release_from_tag(tag_name)
-        # except NotFoundError:
-        #     message = f"Release for {tag_name} not found"
-        #     raise GithubApiNotFoundError(message)
-        return ADORelease()
+        try:
+            version, _ = self.get_version_package(tag_name)
+
+            if not version:
+                raise ADOApiNotFoundError(
+                    f"Version {tag_name} not found for package {self.package_name}"
+                )
+        except AzureDevOpsServiceError:
+            message = f"Release for {tag_name} not found"
+            raise ADOApiNotFoundError(message)
+        except ADOApiNotFoundError as e:
+            raise ADOApiNotFoundError(str(e))
+        return ADORelease(release=version)
 
     def default_branch(self) -> Optional[ADOBranch]:
         """Returns the default branch of the repository."""
@@ -726,9 +864,35 @@ class ADORepository(AbstractRepo):
 
     def full_name(self) -> str:
         """Returns the full name of the repository."""
-        # return self.repo.full_name if self.repo else ""
-        # TODO: Implement the logic to get the full name of the repository
-        return ""
+        return self.repo.name or "" if self.repo else ""
+
+    def publish_repo_package(
+        self, feed, tag_name: str, description: str, scope: str = "project"
+    ) -> None:
+        """Publishes a package to the given feed."""
+        repo_root = self.project_config.repo_root or "."
+        force_app_path = os.path.join(repo_root, "force-app")
+        if not os.path.exists(force_app_path):
+            force_app_path = repo_root
+
+        ctool = self.connection.get_client(
+            "cumulusci_ado.utils.common.client_tool.client_tool_client.ClientToolClient"
+        )
+
+        ret = publish_package(
+            ctool,
+            feed.id,
+            self.package_name,
+            tag_name,
+            force_app_path,
+            description=description,
+            scope=scope,
+            organization=f"https://{self._service_config.url if self._service_config else ''}",
+            project=self.project_id,
+            detect=None,
+        )
+
+        return ret
 
     def create_release(
         self,
@@ -739,17 +903,85 @@ class ADORepository(AbstractRepo):
         prerelease: bool = False,
     ) -> ADORelease:
         """Creates a release on the given repository."""
-        # TODO: Implement the logic to create a release on ADO
-        # try:
-        #     release = self.repo.create_release(
-        #         tag_name, name=name, body=body, draft=draft, prerelease=prerelease
-        #     )
-        #     return GitHubRelease(release=release)
-        # except NotFoundError:
-        #     raise GithubApiNotFoundError(
-        #         f"Could not create release for {tag_name} on GitHub"
-        #     )
-        return ADORelease()
+        try:
+            feed: Feed = self.feed_client.get_feed(
+                self.feed_name, project=self.project_id
+            )
+        except AzureDevOpsServiceError:
+            feed_instance = Feed(name=self.feed_name)
+            feed: Feed = self.feed_client.create_feed(
+                feed_instance, project=self.project_id
+            )
+
+        try:
+            self.publish_repo_package(
+                feed,
+                tag_name,
+                description=str({"tag_name": tag_name, "name": name, "body": body}),
+            )
+
+            self._package = None
+            version, pkg = self.get_version_package(tag_name)
+
+            if not pkg:
+                raise ADOApiNotFoundError(
+                    f"Package {self.package_name} not found in feed {self.feed_name}"
+                )
+
+            if not version:
+                raise ADOApiNotFoundError(
+                    f"Version {tag_name} not found for package {self.package_name}"
+                )
+
+            release: PackageVersion = self.feed_client.get_package_version(
+                feed.id, pkg.id, version.id, project=self.project_id
+            )
+
+            if draft:
+                return ADORelease(release=release)
+
+            feed_view = self.get_feed_view(feed, prerelease=prerelease)
+
+            json_operation = JsonPatchOperation(
+                op="add", path="/views/-", value=feed_view.name
+            )
+            pkg_version_details = PackageVersionDetails(views=json_operation)
+
+            upack_api_client = self.connection.clients.get_upack_api_client()
+            upack_api_client.update_package_version(
+                pkg_version_details,
+                self.feed_name,
+                self.package_name,
+                tag_name,
+                self.project_id,
+            )
+
+            release.views = [feed_view]
+
+            return ADORelease(release=release)
+        except AzureDevOpsServiceError as e:
+            raise ADOApiNotFoundError(
+                f"Could not create release for {tag_name} on Azure DevOps: {str(e)}"
+            )
+
+    def get_feed_view(self, feed, prerelease: bool = False) -> FeedView:
+        """Fetches the feed view for the given feed."""
+        if prerelease:
+            feed_view_name = "Prerelease"
+        else:
+            feed_view_name = "Release"
+
+        feed_view = self.feed_client.get_feed_view(
+            feed.id, feed_view_name, project=self.project_id
+        )
+
+        if feed_view is None:
+            feed_view = FeedView(name=feed_view_name, type="release")
+            feed_view = self.feed_client.create_feed_view(
+                feed_view, feed.id, project=self.project_id
+            )
+
+        return feed_view
 
     def releases(self) -> list[ADORelease]:
         """Fetches all releases from the given repository."""
@@ -824,3 +1056,39 @@ class ADORepository(AbstractRepo):
         # labels: ShortLabel = issue.labels()
         # return [label.name for label in labels] if labels else []
         return []
+
+    def get_latest_commit_sha_on_branch(self, branch_name: str) -> str:
+        """Returns the latest commit SHA for the given branch name."""
+        # Use the GitClient to get the branch and extract the commit SHA
+        branch = self.git_client.get_branch(self.id, branch_name, self.project_id)
+        if hasattr(branch, "commit") and hasattr(branch.commit, "commit_id"):
+            return branch.commit.commit_id
+        raise Exception(f"Could not get latest commit SHA for branch {branch_name}")
+
+    def commit_file_to_branch(
+        self, branch_name: str, file_path: str, file_content: str, commit_message: str
+    ) -> None:
+        """Commits a file to the specified branch using the Git push API (dict payload)."""
+        # Prepare the change as a dict
+        change = {
+            "changeType": "add",
+            "item": {"path": f"/{file_path}"},
+            "newContent": {"content": file_content, "contentType": "rawText"},
+        }
+        # Prepare the commit as a dict
+        commit = {
+            "comment": commit_message,
+            "changes": [change],
+        }
+        # Prepare the ref update as a dict
+        ref_update = {
+            "name": f"refs/heads/{branch_name}",
+            "oldObjectId": self.get_latest_commit_sha_on_branch(branch_name),
+        }
+        # Prepare the push as a dict
+        push = {
+            "commits": [commit],
+            "refUpdates": [ref_update],
+        }
+        # Execute the push
+        self.git_client.create_push(push, self.id, self.project_id)

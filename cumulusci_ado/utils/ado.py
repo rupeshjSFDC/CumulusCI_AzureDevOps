@@ -1,8 +1,19 @@
+import logging
 import re
 from typing import Optional, Tuple
 from urllib.parse import ParseResult, urlparse
 
+import colorama
+from cumulusci.core.exceptions import CumulusCIFailure
 from cumulusci.utils.git import EMPTY_URL_MESSAGE
+
+from cumulusci_ado.utils.common.artifacttool import ArtifactToolInvoker
+from cumulusci_ado.utils.common.artifacttool_updater import ArtifactToolUpdater
+from cumulusci_ado.utils.common.external_tool import (
+    ProgressReportingExternalToolInvoker,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_repo_url(
@@ -38,3 +49,93 @@ def parse_repo_url(
     project: Optional[str] = url_parts[1] if len(url_parts) > 1 else None
 
     return (owner, name, host, project)
+
+
+def publish_package(
+    client_tool,
+    feed,
+    name,
+    version,
+    path,
+    description=None,
+    scope="organization",
+    organization=None,
+    project=None,
+    detect=None,
+):
+    """Publish a package to a feed.
+    :param scope: Scope of the feed: 'project' if the feed was created in a project, and 'organization' otherwise.
+    :type scope: str
+    :param feed: Name or ID of the feed.
+    :type feed: str
+    :param name: Name of the package, e.g. 'foo-package'.
+    :type name: str
+    :param version: Version of the package, e.g. '1.0.0'.
+    :type version: str
+    :param description: Description of the package.
+    :type description: str
+    :param path: Directory containing the package contents.
+    :type path: str
+    """
+    colorama.init()  # Needed for humanfriendly spinner to display correctly
+
+    if scope == "project":
+        if project is None:
+            raise CumulusCIFailure("--scope 'project' requires a value in --project")
+    else:
+        if project is not None:
+            raise CumulusCIFailure(
+                "--scope 'project' is required when specifying a value in --project"
+            )
+
+    artifact_tool = ArtifactToolInvoker(
+        client_tool, ProgressReportingExternalToolInvoker(), ArtifactToolUpdater()
+    )
+    return artifact_tool.publish_universal(
+        organization, project, feed, name, version, description, path
+    )
+
+
+def download_package(
+    client_tool,
+    feed,
+    name,
+    version,
+    path,
+    file_filter=None,
+    scope="organization",
+    organization=None,
+    project=None,
+    detect=None,
+):
+    """Download a package.
+    :param scope: Scope of the feed: 'project' if the feed was created in a project, and 'organization' otherwise.
+    :type scope: str
+    :param feed: Name or ID of the feed.
+    :type feed: str
+    :param name: Name of the package, e.g. 'foo-package'.
+    :type name: str
+    :param version: Version of the package, e.g. 1.0.0.
+    :type version: str
+    :param path: Directory to place the package contents.
+    :type path: str
+    :param file_filter: Wildcard filter for file download.
+    :type file_filter: str
+    """
+    colorama.init()  # Needed for humanfriendly spinner to display correctly
+
+    if scope == "project":
+        if project is None:
+            raise CumulusCIFailure("--scope 'project' requires a value in --project")
+    else:
+        if project is not None:
+            raise CumulusCIFailure(
+                "--scope 'project' is required when specifying a value in --project"
+            )
+
+    artifact_tool = ArtifactToolInvoker(
+        client_tool, ProgressReportingExternalToolInvoker(), ArtifactToolUpdater()
+    )
+    return artifact_tool.download_universal(
+        organization, project, feed, name, version, path, file_filter
+    )
