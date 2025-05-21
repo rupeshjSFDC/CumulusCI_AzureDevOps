@@ -1,8 +1,9 @@
 import os
 import time
 from datetime import UTC, datetime
+from io import BytesIO
 from re import Pattern
-from typing import Optional, Tuple, Union
+from typing import Iterator, Optional, Tuple, Union
 
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsClientError, AzureDevOpsServiceError
@@ -23,6 +24,8 @@ from azure.devops.v7_0.git.models import (
     GitObject,
     GitPullRequest,
     GitPullRequestCompletionOptions,
+    GitPullRequestQuery,
+    GitPullRequestQueryInput,
     GitPullRequestSearchCriteria,
     GitRef,
     GitRepository,
@@ -47,6 +50,9 @@ from cumulusci.vcs.models import (
 
 from cumulusci_ado.utils.ado import parse_repo_url, publish_package
 from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
+
+RELEASE = "Release"
+PRERELEASE = "Prerelease"
 
 
 class ADORef(AbstractRef):
@@ -134,13 +140,25 @@ class ADOCommit(AbstractRepoCommit):
     commit: GitCommit
 
     def get_statuses(self, context: str, regex_match: Pattern[str]) -> Optional[str]:
-        # TODO: Implement the logic to get the status of the commit
-        # for status in self.commit.status().statuses:
-        #     if status.state == "success" and status.context == context:
-        #         match = regex_match.search(status.description)
-        #         if match:
-        #             return match.group(1)
+        """
+        Returns the first regex group from the description of a successful status with the given context name.
+        """
+        if not hasattr(self, "statuses") or self.commit.statuses is None:
+            return None
+        for status in self.commit.statuses:
+            if (
+                status.state == "success"
+                and getattr(status.context, "name", None) == context
+            ):
+                match = regex_match.search(status.description)
+                if match:
+                    return match.group(1)
         return None
+
+    @property
+    def tree_id(self) -> str:
+        """Gets the tree ID of the commit."""
+        return self.commit.tree_id or "" if self.commit else ""
 
 
 class ADOBranch(AbstractBranch):
@@ -188,6 +206,15 @@ class ADOBranch(AbstractBranch):
         except Exception as ex:
             message = f"Unexpected error when getting branches: {str(ex)}"
             raise Exception(message)
+
+    @property
+    def commit_id(self) -> str:
+        """Gets the commit ID of the branch."""
+        return (
+            self.branch.commit.commit_id or ""
+            if self.branch and self.branch.commit
+            else ""
+        )
 
 
 class ADOPullRequest(AbstractPullRequest):
@@ -463,7 +490,7 @@ class ADORelease(AbstractRelease):
         return any(
             view
             for view in self.release.views or []
-            if view.type == "release" and view.name.lower() == "prerelease"
+            if view.type == "release" and view.name == PRERELEASE
         )
 
     @property
@@ -565,8 +592,7 @@ class ADORepository(AbstractRepo):
     @property
     def owner_login(self) -> str:
         """Returns the owner login of the repository."""
-        # TODO: Implement the logic to get the owner login from ADO
-        # return self.repo.owner.login if self.repo else ""
+        # Applicable only for Github
         return ""
 
     @property
@@ -596,6 +622,10 @@ class ADORepository(AbstractRepo):
                 self.logger.info(
                     f"Found SubscriberPackage {self._package_name} for the version id {self.options.get('version_id')}."
                 )
+        else:
+            self._package_name = self.project_config.project__package__name.replace(
+                " ", "-"
+            ).lower()
 
         return self._package_name
 
@@ -844,23 +874,38 @@ class ADORepository(AbstractRepo):
             raise ADOApiNotFoundError(str(e))
         return ADORelease(release=version)
 
-    def default_branch(self) -> Optional[ADOBranch]:
+    @property
+    def default_branch(self) -> str:
         """Returns the default branch of the repository."""
-        # TODO: Implement the logic to get the default branch from ADO
-        # return ADOBranch(self, self.repo.default_branch) if self.repo else None
-        return ADOBranch(self, "")
+        default_branch: str = self.repo.default_branch or "" if self.repo else ""
+        return default_branch.replace("refs/heads/", "")
 
-    def archive(self, format: str, zip_content: Union[str, object], ref=None) -> bytes:
+    def archive(self, format: str, zip_content: Union[str, BytesIO], ref=None) -> bytes:
         """Archives the repository content as a zip file."""
-        # TODO: Implement the logic to archive the repository content
-        # try:
-        #     archive = self.repo.archive(format, zip_content, ref)
-        #     return archive
-        # except NotFoundError:
-        #     raise GithubApiNotFoundError(
-        #         f"Could not find archive for {zip_content} for service {self.service_type}"
-        #     )
-        return b""
+        try:
+
+            if ref is not None and ref == self.default_branch:
+                branch = ADOBranch(self, ref)
+                ref = branch.commit_id
+
+            commit = self.get_commit(ref or "")
+
+            byte_iter: Iterator[bytes] = self.git_client.get_tree_zip(
+                self.id, commit.tree_id, project_id=self.project_id
+            )
+            zip_bytes = b"".join(byte_iter)
+
+            if isinstance(zip_content, str):
+                with open(zip_content, "wb") as f:
+                    f.write(zip_bytes)
+            elif hasattr(zip_content, "write"):
+                zip_content.write(zip_bytes)
+
+            return zip_bytes
+        except AzureDevOpsServiceError:
+            raise ADOApiNotFoundError(
+                f"Could not find archive for {zip_content} for service {self.service_type}"
+            )
 
     def full_name(self) -> str:
         """Returns the full name of the repository."""
@@ -967,9 +1012,9 @@ class ADORepository(AbstractRepo):
     def get_feed_view(self, feed, prerelease: bool = False) -> FeedView:
         """Fetches the feed view for the given feed."""
         if prerelease:
-            feed_view_name = "Prerelease"
+            feed_view_name = PRERELEASE
         else:
-            feed_view_name = "Release"
+            feed_view_name = RELEASE
 
         feed_view = self.feed_client.get_feed_view(
             feed.id, feed_view_name, project=self.project_id
@@ -985,110 +1030,96 @@ class ADORepository(AbstractRepo):
 
     def releases(self) -> list[ADORelease]:
         """Fetches all releases from the given repository."""
-        # TODO: Implement the logic to fetch all releases from ADO
-        # try:
-        #     releases = self.repo.releases()
-        #     return [GitHubRelease(release=release) for release in releases]
-        # except NotFoundError:
-        #     raise GithubApiNotFoundError("Could not find releases on GitHub")
-        # except UnprocessableEntity:
-        #     raise GithubApiNotFoundError(
-        #         "Could not find releases on GitHub. Check if the repository is archived."
-        #     )
-        # except GitHubError as e:
-        #     if e.code == http.client.UNAUTHORIZED:
-        #         raise GithubApiNotFoundError(
-        #             "Could not find releases on GitHub. Check your authentication."
-        #         )
-        #     else:
-        #         raise GithubApiNotFoundError(
-        #             f"Could not find releases on GitHub: {e.message}"
-        #         )
-        # except Exception as e:
-        #     raise GithubApiNotFoundError(
-        #         f"An unexpected error occurred while fetching releases: {str(e)}"
-        #     )
-        return []
+        try:
+            artifacts: list[Package] = self.feed_client.get_packages(
+                self.feed_name,
+                project=self.project_id,
+                package_name_query=self.package_name,
+                include_all_versions=True,
+            )
+
+            versions = []
+            for package in artifacts:
+                versions.extend(
+                    ADORelease(release=pkg_ver) for pkg_ver in package.versions or []
+                )
+
+            return versions
+        except AzureDevOpsServiceError:
+            raise ADOApiNotFoundError(
+                f"Could not find releases for {self.package_name} on Azure DevOps"
+            )
 
     def latest_release(self) -> Optional[ADORelease]:
         """Fetches the latest release from the given repository."""
-        # TODO: Implement the logic to fetch the latest release from ADO
-        # release = self.repo.latest_release()
-        # if release:
-        #     return GitHubRelease(release=release)
-        return None
+        try:
+            pkg = self.get_package()
+
+            if not pkg:
+                raise ADOApiNotFoundError(
+                    f"Could not find package {self.package_name} on Azure DevOps"
+                )
+
+            release_versions = [
+                v
+                for v in pkg.versions or []
+                if v.views
+                and any(
+                    view.name == RELEASE and getattr(view, "type", None) == "release"
+                    for view in v.views
+                )
+            ]
+
+            latest = max(release_versions, key=lambda v: v.version)
+
+            return ADORelease(release=latest)
+        except AzureDevOpsServiceError:
+            raise ADOApiNotFoundError(
+                f"Could not find releases for {self.package_name} on Azure DevOps"
+            )
 
     def has_issues(self) -> bool:
         """Checks if the repository has issues enabled."""
-        # TODO: Implement the logic to check if issues are enabled on ADO
-        # return self.repo.has_issues() if self.repo else False
+        wit_client = self.connection.clients.get_work_item_tracking_client()
+
+        # Try to list work item types, as there is no direct API to check if work items are enabled
+        work_item_types = wit_client.get_work_item_types(project=self.project_id)
+        if work_item_types:
+            return True
         return False
 
     def get_pull_requests_by_commit(self, commit_sha) -> list[ADOPullRequest]:
         """Fetches all pull requests associated with the given commit SHA."""
-        # TODO: Implement the logic to fetch pull requests by commit SHA
-        # endpoint = (
-        #     self.github.session.base_url
-        #     + f"/repos/{self.repo.owner.login}/{self.repo.name}/commits/{commit_sha}/pulls"
-        # )
-        # response = self.github.session.get(
-        #     endpoint, headers={"Accept": "application/vnd.github.groot-preview+json"}
-        # )
-        # json_list = safe_json_from_response(response)
 
-        # for json in json_list:
-        #     json["body_html"] = ""
-        #     json["body_text"] = ""
+        query_input = GitPullRequestQueryInput(
+            items=[commit_sha],
+            type="commit",  # This is the key value for commit-based queries
+        )
+        query = GitPullRequestQuery(queries=[query_input])
 
-        # pull_requests = [
-        #     GitHubPullRequest(
-        #         repo=self.repo, pull_request=ShortPullRequest(json, self.github)
-        #     )
-        #     for json in json_list
-        # ]
-        # return pull_requests
-        return []
+        pr_query: GitPullRequestQuery = self.git_client.get_pull_request_query(
+            queries=query, repository_id=self.id, project=self.project_id
+        )
+
+        return [
+            ADOPullRequest(repo=self, pull_request=pr) for pr in pr_query.results or []
+        ]
 
     def get_pr_issue_labels(self, pull_request: ADOPullRequest) -> list[str]:
         """Fetches all labels associated with the given pull request."""
-        # TODO: Implement the logic to fetch labels from ADO
-        # issue: ShortIssue = self.repo.issue(pull_request.number)
-        # labels: ShortLabel = issue.labels()
-        # return [label.name for label in labels] if labels else []
-        return []
+        # 1. Get work items linked to the pull request
+        work_items_refs = self.git_client.get_pull_request_work_item_refs(
+            self.id, pull_request.number, project=self.project_id
+        )
 
-    def get_latest_commit_sha_on_branch(self, branch_name: str) -> str:
-        """Returns the latest commit SHA for the given branch name."""
-        # Use the GitClient to get the branch and extract the commit SHA
-        branch = self.git_client.get_branch(self.id, branch_name, self.project_id)
-        if hasattr(branch, "commit") and hasattr(branch.commit, "commit_id"):
-            return branch.commit.commit_id
-        raise Exception(f"Could not get latest commit SHA for branch {branch_name}")
+        wit_client = self.connection.clients.get_work_item_tracking_client()
+        # 2. For each work item, get tags
+        labels = []
+        for work_item_ref in work_items_refs:
+            work_item = wit_client.get_work_item(
+                work_item_ref.id, fields=["System.Tags"]
+            )
+            tags = work_item.fields.get("System.Tags", "")
+            labels.extend(tags.split(";"))
 
-    def commit_file_to_branch(
-        self, branch_name: str, file_path: str, file_content: str, commit_message: str
-    ) -> None:
-        """Commits a file to the specified branch using the Git push API (dict payload)."""
-        # Prepare the change as a dict
-        change = {
-            "changeType": "add",
-            "item": {"path": f"/{file_path}"},
-            "newContent": {"content": file_content, "contentType": "rawText"},
-        }
-        # Prepare the commit as a dict
-        commit = {
-            "comment": commit_message,
-            "changes": [change],
-        }
-        # Prepare the ref update as a dict
-        ref_update = {
-            "name": f"refs/heads/{branch_name}",
-            "oldObjectId": self.get_latest_commit_sha_on_branch(branch_name),
-        }
-        # Prepare the push as a dict
-        push = {
-            "commits": [commit],
-            "refUpdates": [ref_update],
-        }
-        # Execute the push
-        self.git_client.create_push(push, self.id, self.project_id)
+        return labels
