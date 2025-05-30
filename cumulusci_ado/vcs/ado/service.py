@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Type
 
 import requests
 from azure.devops.connection import Connection
@@ -10,6 +10,7 @@ from msrest.authentication import BasicAuthentication
 
 from cumulusci_ado.utils.ado import parse_repo_url
 from cumulusci_ado.vcs.ado import ADORelease, ADORepository
+from cumulusci_ado.vcs.ado.dependencies import ADODynamicDependency
 from cumulusci_ado.vcs.ado.generator import (
     ADOParentPullRequestNotesGenerator,
     ADOReleaseNotesGenerator,
@@ -104,7 +105,7 @@ class AzureDevOpsService(VCSService):
 
         service_by_host = {service.url: service for service in configured_services}
 
-        azure_url = f"https://{host}/{project}"
+        azure_url = f"{host}/{_owner}"
 
         # Check when connecting to server, but not when creating new service as this would always catch
         if azure_url is not None and list(service_by_host.keys()).count(azure_url) == 0:
@@ -125,8 +126,13 @@ class AzureDevOpsService(VCSService):
         )
         return vcs_service
 
+    @property
+    def dynamic_dependency_class(self) -> Type[ADODynamicDependency]:
+        """Returns the dynamic dependency class for the Azure DevOps service."""
+        return ADODynamicDependency
+
     def get_repository(self, options: dict = {}) -> Optional[ADORepository]:
-        """Returns the GitHub repository."""
+        """Returns the Azure DevOps repository."""
         if self._repo is None:
             self._repo = ADORepository(
                 self.connection,

@@ -1123,3 +1123,13 @@ class ADORepository(AbstractRepo):
             labels.extend(tags.split(";"))
 
         return labels
+
+    def directory_contents(self, subfolder: str, return_as, ref: str) -> dict:
+        """Fetches the contents of a directory in the repository."""
+        # TODO: try:
+        #     contents = self.repo.directory_contents(subfolder, return_as=return_as, ref=ref)
+        # except NotFoundError:
+        #     contents = None
+        #     raise GithubApiNotFoundError("Could not find latest prerelease on GitHub")
+        # return contents
+        return {}
