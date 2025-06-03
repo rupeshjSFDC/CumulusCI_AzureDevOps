@@ -10,7 +10,7 @@ from msrest.authentication import BasicAuthentication
 
 from cumulusci_ado.utils.ado import parse_repo_url
 from cumulusci_ado.vcs.ado import ADORelease, ADORepository
-from cumulusci_ado.vcs.ado.dependencies import ADODynamicDependency
+from cumulusci_ado.vcs.ado.dependencies.ado_dependencies import ADODynamicDependency
 from cumulusci_ado.vcs.ado.generator import (
     ADOParentPullRequestNotesGenerator,
     ADOReleaseNotesGenerator,

@@ -5,9 +5,12 @@ VCSSource.register(
     "azure_devops", "cumulusci_ado.vcs.ado.source.azure_devops.ADOSource"
 )
 
-# from cumulusci_ado.vcs.ado.dependencies.resolvers import VCS_AZURE_DEVOPS, ADO_RESOLVER_CLASSES
-# from cumulusci.core.dependencies.base import update_resolver_classes
-# update_resolver_classes(VCS_AZURE_DEVOPS, ADO_RESOLVER_CLASSES)
+from cumulusci_ado.vcs.ado.dependencies.ado_dependencies import VCS_ADO as dep
+from cumulusci_ado.vcs.ado.dependencies.ado_resolvers import VCS_ADO as res
+
+assert (
+    dep == res
+), "VCS_ADO must match in dependencies and resolvers. (Assertion done to load the ado dependencies and resolvers correctly)"
 
 
 class AzureDevOpsPlugin(PluginBase):

@@ -1,7 +1,7 @@
 import os
 import time
 from datetime import UTC, datetime
-from io import BytesIO
+from io import BytesIO, StringIO
 from re import Pattern
 from typing import Iterator, Optional, Tuple, Union
 
@@ -62,21 +62,22 @@ class ADORef(AbstractRef):
 
     def __init__(self, ref: GitRef, **kwargs) -> None:
         super().__init__(ref, **kwargs)
-        self.sha = self.ref.object_id
+        self.sha = kwargs.get("sha") or self.ref.object_id
         self.type = "tag"
 
 
 class ADOTag(AbstractGitTag):
     tag: GitAnnotatedTag
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.sha = self.tag.object_id or "" if self.tag else ""
-
     @property
     def message(self) -> str:
         """Gets the message of the tag."""
         return self.tag.message or "" if self.tag else ""
+
+    @property
+    def sha(self) -> str:
+        """Gets the SHA of the tag."""
+        return self.tag.object_id or "" if self.tag else ""
 
 
 class ADOComparison(AbstractComparison):
@@ -138,6 +139,13 @@ class ADOCommit(AbstractRepoCommit):
     """ADO commit object for representing a commit in the repository."""
 
     commit: GitCommit
+    _sha: str
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._sha = (
+            self.commit.commit_id or "" if self.commit else kwargs.get("sha", "")
+        )
 
     def get_statuses(self, context: str, regex_match: Pattern[str]) -> Optional[str]:
         """
@@ -159,6 +167,16 @@ class ADOCommit(AbstractRepoCommit):
     def tree_id(self) -> str:
         """Gets the tree ID of the commit."""
         return self.commit.tree_id or "" if self.commit else ""
+
+    @property
+    def parents(self) -> list["ADOCommit"]:
+        # TODO: Test this method
+        return [ADOCommit(**c) for c in self.commit.parents or []]
+
+    @property
+    def sha(self) -> str:
+        """Gets the SHA of the commit."""
+        return self._sha
 
 
 class ADOBranch(AbstractBranch):
@@ -215,6 +233,14 @@ class ADOBranch(AbstractBranch):
             if self.branch and self.branch.commit
             else ""
         )
+
+    @property
+    def commit(self) -> Optional[ADOCommit]:
+        """Gets the branch commit for the current branch."""
+        if self.branch is None:
+            self.get_branch()
+
+        return ADOCommit(commit=self.branch.commit) if self.branch else None
 
 
 class ADOPullRequest(AbstractPullRequest):
@@ -517,6 +543,11 @@ class ADORelease(AbstractRelease):
             if view.type == "implicit" and view.name.lower() == "local"
         )
 
+    @property
+    def tag_ref_name(self) -> str:
+        """Gets the tag reference name of the release."""
+        return "tags/" + self.tag_name
+
 
 class ADORepository(AbstractRepo):
 
@@ -601,31 +632,9 @@ class ADORepository(AbstractRepo):
         if self._package_name:
             return self._package_name
 
-        # Get the package name from version_id from options.
-        version_id = self.options.get("version_id")
-        if version_id is not None:
-            res = self.tooling.query(
-                f"SELECT Id, Name, SubscriberPackageId FROM SubscriberPackageVersion WHERE Id = '{version_id}'"
-            )
-            if res["size"] < 1:
-                return ""
-
-            subscriber_id = res["records"][0]["SubscriberPackageId"]
-
-            res = self.tooling.query(
-                f"SELECT Id, Name FROM SubscriberPackage WHERE Id = '{subscriber_id}'"
-            )
-
-            if res["size"] > 0:
-                self._package_name = res["records"][0]["Name"].replace(" ", "-").lower()
-
-                self.logger.info(
-                    f"Found SubscriberPackage {self._package_name} for the version id {self.options.get('version_id')}."
-                )
-        else:
-            self._package_name = self.project_config.project__package__name.replace(
-                " ", "-"
-            ).lower()
+        self._package_name = self.project_config.project__package__name.replace(
+            " ", "-"
+        ).lower()
 
         return self._package_name
 
@@ -650,6 +659,30 @@ class ADORepository(AbstractRepo):
                 base_url="tooling",
             )
         return self._tooling
+
+    def get_ref(self, ref_sha: str) -> Optional[ADORef]:
+        """Gets a Reference object for the tag with the given SHA"""
+        try:
+            refs: list[GitRef] = self.git_client.get_refs(
+                self.id,
+                self.project_id,
+                filter=ref_sha,
+                include_statuses=True,
+                latest_statuses_only=True,
+                peel_tags=True,
+                top=1,
+            )
+
+            if refs and refs[0].peeled_object_id:
+                commit = self.get_commit(refs[0].peeled_object_id)
+                return ADORef(refs[0], sha=commit.sha)
+
+            raise
+
+        except Exception as e:
+            raise ADOApiNotFoundError(
+                f"Could not find reference for '{ref_sha}' on ADO. Error: {str(e)}"
+            )
 
     def get_ref_for_tag(self, tag_name: str) -> Optional[ADORef]:
         """Gets a Reference object for the tag with the given name"""
@@ -1126,10 +1159,113 @@ class ADORepository(AbstractRepo):
 
     def directory_contents(self, subfolder: str, return_as, ref: str) -> dict:
         """Fetches the contents of a directory in the repository."""
-        # TODO: try:
-        #     contents = self.repo.directory_contents(subfolder, return_as=return_as, ref=ref)
-        # except NotFoundError:
-        #     contents = None
-        #     raise GithubApiNotFoundError("Could not find latest prerelease on GitHub")
-        # return contents
-        return {}
+        try:
+            version_type = "commit" if len(ref) == 40 else "branch"
+
+            version_descriptor = GitVersionDescriptor(
+                version=ref, version_type=version_type
+            )
+            items = self.git_client.get_items(
+                repository_id=self.id,
+                project=self.project_id,
+                scope_path=subfolder,
+                recursion_level="OneLevel",  # only one level deep should suffice.
+                version_descriptor=version_descriptor,
+            )
+
+            contents = {}
+            for item in items:
+                name = item.path.split("/")[-1]
+                if name == subfolder:
+                    continue
+                contents[
+                    name
+                ] = item  # Wrap this in a custom class, but content values are not processed.
+        except AzureDevOpsServiceError as e:
+            # Handle the case where the directory does not exist
+            raise ADOApiNotFoundError(
+                f"Could not find directory {subfolder} on Azure DevOps: {str(e)}"
+            )
+        return contents
+
+    def clone_url(self) -> str:
+        """Fetches the clone URL for the repository."""
+        return self.repo.remote_url or "" if self.repo else ""
+
+    def file_contents(self, file_path: str, ref: str) -> StringIO:
+        """Fetches the contents of a file in the repository."""
+        from azure.devops.v7_0.git.models import GitVersionDescriptor
+
+        version_type = "commit" if len(ref) == 40 else "branch"
+
+        contents = self.git_client.get_item_content(
+            repository_id=self.id,
+            path=file_path,
+            project=self.project_id,
+            version_descriptor=GitVersionDescriptor(
+                version_type=version_type,
+                version=ref.split("/")[-1] if ref.startswith("refs/") else ref,
+            ),
+        )
+
+        contents_io = StringIO(
+            b"".join(chunk for chunk in contents).decode("utf-8") if contents else ""
+        )
+        contents_io.url = f"{file_path} from {self.repo_url}"  # type: ignore
+
+        return contents_io
+
+    def get_latest_prerelease(self) -> Optional[ADORelease]:
+        """Fetches the latest prerelease from the repository."""
+        # TODO: Refractor
+        try:
+            pkg = self.get_package()
+
+            if not pkg:
+                raise ADOApiNotFoundError(
+                    f"Could not find package {self.package_name} on Azure DevOps"
+                )
+
+            release_versions = [
+                v
+                for v in pkg.versions or []
+                if v.views
+                and any(getattr(view, "type", None) == "release" for view in v.views)
+            ]
+
+            latest = max(release_versions, key=lambda v: v.version)
+
+            return ADORelease(release=latest)
+        except AzureDevOpsServiceError:
+            # A repo accessed remotely, the feed name.
+            # Get all the feeds.
+            # Assume first feed is what we want.
+            feeds = self.feed_client.get_feeds(project=self.project_id)
+            if not feeds:
+                raise ADOApiNotFoundError(
+                    f"Could not find feeds for {self.package_name} on Azure DevOps"
+                )
+            feed = feeds[0]
+
+            artifacts: list[Package] = self.feed_client.get_packages(
+                feed.id,
+                project=self.project_id,
+                include_all_versions=True,
+            )
+
+            if not artifacts:
+                return None
+
+            release_versions = [
+                v
+                for v in artifacts[0].versions or []
+                if v.views
+                and any(getattr(view, "type", None) == "release" for view in v.views)
+            ]
+
+            latest = max(release_versions, key=lambda v: v.version)
+
+            return ADORelease(release=latest)
+            # raise ADOApiNotFoundError(
+            #     f"Could not find releases for {self.package_name} on Azure DevOps"
+            # )

@@ -25,6 +25,14 @@ class ADOSource(VCSSource):
 
         return AzureDevOpsService.get_service_for_url(self.project_config, self.url)
 
+    def _set_additional_repo_config(self):
+        from cumulusci.vcs.bootstrap import get_remote_project_config
+
+        super()._set_additional_repo_config()
+        self.repo.project_config = get_remote_project_config(
+            self.repo, self.repo.default_branch
+        )
+
     def get_ref(self):
         return self.spec.ref
 
