@@ -95,12 +95,13 @@ class AzureDevOpsService(VCSService):
     ) -> Optional["AzureDevOpsService"]:
         """Returns the service configuration for the given URL."""
         _owner, _repo_name, host, project = parse_repo_url(url)
+
         configured_services: list[ServiceConfig] = []
 
         if project_config.keychain is not None:
             # Check if the service is already configured in the keychain
             configured_services = project_config.keychain.get_services_for_type(
-                cls.service_type
+                cls.service_type,
             )
 
         service_by_host = {service.url: service for service in configured_services}
@@ -109,7 +110,7 @@ class AzureDevOpsService(VCSService):
 
         # Check when connecting to server, but not when creating new service as this would always catch
         if azure_url is not None and list(service_by_host.keys()).count(azure_url) == 0:
-            project_config.logger.info(
+            project_config.logger.debug(
                 f"No Azure DevOps service configured for domain {azure_url}."
             )
             return None
@@ -123,6 +124,9 @@ class AzureDevOpsService(VCSService):
             service_config=service_config,
             logger=project_config.logger,
             repository_url=url,
+        )
+        project_config.logger.info(
+            f"Azure DevOps service configured for domain {host}."
         )
         return vcs_service
 

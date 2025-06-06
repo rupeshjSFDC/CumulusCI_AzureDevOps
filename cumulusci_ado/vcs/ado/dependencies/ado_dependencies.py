@@ -11,6 +11,7 @@ from cumulusci.core.exceptions import DependencyResolutionError
 from pydantic import root_validator
 from pydantic.networks import AnyUrl
 
+from cumulusci_ado.utils.ado import parse_repo_url
 from cumulusci_ado.vcs.ado.adapter import ADORepository
 from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 
@@ -129,6 +130,12 @@ class UnmanagedADORefDependency(base_dependency.UnmanagedVcsDependency):
 
     def get_repo(self, context, url) -> Optional["ADORepository"]:
         return get_ado_repo(context, url)
+
+    @property
+    def package_name(self) -> str:
+        _owner, _repo_name, host, project = parse_repo_url((str(self.azure_devops)))
+        package_name = f"{_owner}/{_repo_name} {self.subfolder}"
+        return package_name
 
     @root_validator
     def validate(cls, values):

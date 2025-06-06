@@ -1,5 +1,5 @@
 import abc
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from cumulusci.core.config.project_config import BaseProjectConfig
 from cumulusci.core.dependencies.resolvers import (
@@ -221,7 +221,7 @@ class ADODefaultBranchUnlockedCommitStatusResolver(
     commit_status_default = "Build Unlocked Test Package"
 
 
-ADO_RESOLVER_CLASSES = {
+ADO_RESOLVER_CLASSES: dict[str, type[Any]] = {
     DependencyResolutionStrategy.STATIC_TAG_REFERENCE: ADOTagResolver,
     DependencyResolutionStrategy.COMMIT_STATUS_EXACT_BRANCH: ADOExactMatch2GPResolver,
     DependencyResolutionStrategy.COMMIT_STATUS_RELEASE_BRANCH: ADOReleaseBranchCommitStatusResolver,

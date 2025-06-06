@@ -36,7 +36,8 @@ def parse_repo_url(
     formatted_url = f"ssh://{url}" if url.startswith("git") else url
     parse_result: ParseResult = urlparse(formatted_url)
 
-    host: Optional[str] = parse_result.hostname
+    host: str = parse_result.hostname or ""
+    host = host.replace("ssh.", "") if url.startswith("git") else host
 
     url_parts = re.split("/|@|:", parse_result.path.rstrip("/").lstrip("/"))
     url_parts = list(filter(None, url_parts))
@@ -139,3 +140,43 @@ def download_package(
     return artifact_tool.download_universal(
         organization, project, feed, name, version, path, file_filter
     )
+
+
+def custom_to_semver(version_str: str) -> str:
+    """
+    Converts a custom version string with an optional prerelease prefix and any separator
+    to a valid SemVer 2.0 string, using named regex groups.
+    Examples:
+      'beta_0.1.0.1'  -> '0.1.0-build.1'
+      'beta/0.1.0.1'  -> '0.1.0-build.1'
+      'alpha-1.2.3'   -> '1.2.3-alpha'
+      '1.2.3.4'       -> '1.2.3-build4'
+      '1.2.3'         -> '1.2.3'
+    """
+    # Regex with named groups: 'prefix' and 'numbers'
+    match = re.match(
+        r"^(?P<prefix>[a-zA-Z0-9]+)[^\d.]+(?P<numbers>[\d.]+)$", version_str
+    )
+    if match:
+        prefix = match.group("prefix")
+        numbers = match.group("numbers")
+    else:
+        prefix, numbers = "", version_str
+
+    parts = numbers.split(".")
+    if len(parts) < 3:
+        raise ValueError("Version must have at least major.minor.patch")
+
+    major, minor, patch = parts[:3]
+    build = parts[3] if len(parts) > 3 else None
+
+    if prefix and build:
+        semver = f"{major}.{minor}.{patch}-build.{build}"
+    elif prefix:
+        semver = f"{major}.{minor}.{patch}-{prefix}"
+    elif build:
+        semver = f"{major}.{minor}.{patch}-{build}"
+    else:
+        semver = f"{major}.{minor}.{patch}"
+
+    return semver

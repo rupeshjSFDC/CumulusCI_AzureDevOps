@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from datetime import UTC, datetime
@@ -48,7 +49,7 @@ from cumulusci.vcs.models import (
     AbstractRepoCommit,
 )
 
-from cumulusci_ado.utils.ado import parse_repo_url, publish_package
+from cumulusci_ado.utils.ado import custom_to_semver, parse_repo_url, publish_package
 from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 
 RELEASE = "Release"
@@ -158,9 +159,9 @@ class ADOCommit(AbstractRepoCommit):
                 status.state == "success"
                 and getattr(status.context, "name", None) == context
             ):
-                match = regex_match.search(status.description)
-                if match:
-                    return match.group(1)
+                search_match = regex_match.search(status.description)
+                if search_match:
+                    return search_match.group(1)
         return None
 
     @property
@@ -458,52 +459,34 @@ class ADOPullRequest(AbstractPullRequest):
         return self.pull_request.closed_date or datetime.now(UTC)
 
 
-# class Release(Package):
-#     @property
-#     def tag_name(self) -> str:
-#         """Gets the tag name of the release."""
-#         return self.tag_name or ""
-
-#     @property
-#     def body(self) -> str:
-#         """Gets the body of the release."""
-#         return self.body or ""
-
-#     @property
-#     def prerelease(self) -> bool:
-#         """Checks if the release is a pre-release."""
-#         return self.prerelease or False
-
-#     @property
-#     def name(self) -> str:
-#         """Gets the name of the release."""
-#         return self.name or ""
-
-#     @property
-#     def html_url(self) -> str:
-#         """Gets the HTML URL of the release."""
-#         return self.html_url or ""
-
-#     @property
-#     def created_at(self) -> datetime:
-#         """Gets the creation date of the release."""
-#         return self.created_at or datetime.now(UTC)
-
-#     @property
-#     def draft(self) -> bool:
-#         """Checks if the release is a draft."""
-#         return self.draft or False
-
-
 class ADORelease(AbstractRelease):
     """Azure DevOps release object for creating and managing releases."""
 
     release: "PackageVersion"
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._tag_name = kwargs.get("tag_name", "")
+
     @property
     def tag_name(self) -> str:
         """Gets the tag name of the release."""
-        return self.release.version or "" if self.release else ""
+        if self._tag_name:
+            return self._tag_name
+
+        description = self.release.package_description or self.release.description
+        if description:
+            try:
+                tag_name = json.loads(description).get("tag_name", "")
+                if tag_name:
+                    self._tag_name = tag_name
+            except json.JSONDecodeError:
+                pass
+
+        if self._tag_name is None:
+            self._tag_name = self.release.version
+
+        return self._tag_name or ""
 
     @property
     def body(self) -> Union[str, None]:
@@ -513,11 +496,14 @@ class ADORelease(AbstractRelease):
     @property
     def prerelease(self) -> bool:
         """Checks if the release is a pre-release."""
-        return any(
-            view
-            for view in self.release.views or []
-            if view.type == "release" and view.name == PRERELEASE
-        )
+        if self.release and self.release.views and len(self.release.views) > 0:
+            if self.release.views[0] is not None:
+                return (
+                    self.release.views[0].type == "release"
+                    and self.release.views[0].name == PRERELEASE
+                )
+
+        return False
 
     @property
     def name(self) -> str:
@@ -866,7 +852,7 @@ class ADORepository(AbstractRepo):
             self.feed_name,
             project=self.project_id,
             package_name_query=self.package_name,
-            include_all_versions=True,
+            include_description=True,
         )
         pkgs: list[Package] = [
             pkg for pkg in artifacts if pkg.name == self.package_name
@@ -884,8 +870,11 @@ class ADORepository(AbstractRepo):
         if not pkg:
             return None, None
 
+        # ADO does not allow version name to be alphanumeric, so we need to filter by version name
+        numeric_part = custom_to_semver(version_name)
+
         versions: list[MinimalPackageVersion] = [
-            version for version in pkg.versions or [] if version.version == version_name
+            version for version in pkg.versions or [] if version.version == numeric_part
         ]
         if not versions:
             return None, pkg
@@ -905,7 +894,7 @@ class ADORepository(AbstractRepo):
             raise ADOApiNotFoundError(message)
         except ADOApiNotFoundError as e:
             raise ADOApiNotFoundError(str(e))
-        return ADORelease(release=version)
+        return ADORelease(release=version, tag_name=tag_name)
 
     @property
     def default_branch(self) -> str:
@@ -979,6 +968,7 @@ class ADORepository(AbstractRepo):
         body: str = "",
         draft: bool = False,
         prerelease: bool = False,
+        options: dict = {},
     ) -> ADORelease:
         """Creates a release on the given repository."""
         try:
@@ -992,10 +982,12 @@ class ADORepository(AbstractRepo):
             )
 
         try:
+            numeric_part = custom_to_semver(tag_name)
+
             self.publish_repo_package(
                 feed,
-                tag_name,
-                description=str({"tag_name": tag_name, "name": name, "body": body}),
+                numeric_part,
+                description=json.dumps({"tag_name": tag_name, "body": body}),
             )
 
             self._package = None
@@ -1016,7 +1008,7 @@ class ADORepository(AbstractRepo):
             )
 
             if draft:
-                return ADORelease(release=release)
+                return ADORelease(release=release, tag_name=tag_name)
 
             feed_view = self.get_feed_view(feed, prerelease=prerelease)
 
@@ -1030,13 +1022,13 @@ class ADORepository(AbstractRepo):
                 pkg_version_details,
                 self.feed_name,
                 self.package_name,
-                tag_name,
+                numeric_part,
                 self.project_id,
             )
 
             release.views = [feed_view]
 
-            return ADORelease(release=release)
+            return ADORelease(release=release, tag_name=tag_name)
         except AzureDevOpsServiceError as e:
             raise ADOApiNotFoundError(
                 f"Could not create release for {tag_name} on Azure DevOps: {str(e)}"
@@ -1086,26 +1078,7 @@ class ADORepository(AbstractRepo):
     def latest_release(self) -> Optional[ADORelease]:
         """Fetches the latest release from the given repository."""
         try:
-            pkg = self.get_package()
-
-            if not pkg:
-                raise ADOApiNotFoundError(
-                    f"Could not find package {self.package_name} on Azure DevOps"
-                )
-
-            release_versions = [
-                v
-                for v in pkg.versions or []
-                if v.views
-                and any(
-                    view.name == RELEASE and getattr(view, "type", None) == "release"
-                    for view in v.views
-                )
-            ]
-
-            latest = max(release_versions, key=lambda v: v.version)
-
-            return ADORelease(release=latest)
+            return self.get_latest_artifact()
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
                 f"Could not find releases for {self.package_name} on Azure DevOps"
@@ -1188,6 +1161,7 @@ class ADORepository(AbstractRepo):
             )
         return contents
 
+    @property
     def clone_url(self) -> str:
         """Fetches the clone URL for the repository."""
         return self.repo.remote_url or "" if self.repo else ""
@@ -1215,57 +1189,45 @@ class ADORepository(AbstractRepo):
 
         return contents_io
 
-    def get_latest_prerelease(self) -> Optional[ADORelease]:
-        """Fetches the latest prerelease from the repository."""
-        # TODO: Refractor
-        try:
-            pkg = self.get_package()
+    def get_latest_artifact(self, prerelease: bool = False) -> Optional[ADORelease]:
+        pkg = self.get_package()
 
-            if not pkg:
-                raise ADOApiNotFoundError(
-                    f"Could not find package {self.package_name} on Azure DevOps"
-                )
+        if not pkg:
+            raise ADOApiNotFoundError(
+                f"Could not find package {self.package_name} on Azure DevOps"
+            )
 
+        if prerelease:
             release_versions = [
                 v
                 for v in pkg.versions or []
                 if v.views
                 and any(getattr(view, "type", None) == "release" for view in v.views)
             ]
-
-            latest = max(release_versions, key=lambda v: v.version)
-
-            return ADORelease(release=latest)
-        except AzureDevOpsServiceError:
-            # A repo accessed remotely, the feed name.
-            # Get all the feeds.
-            # Assume first feed is what we want.
-            feeds = self.feed_client.get_feeds(project=self.project_id)
-            if not feeds:
-                raise ADOApiNotFoundError(
-                    f"Could not find feeds for {self.package_name} on Azure DevOps"
-                )
-            feed = feeds[0]
-
-            artifacts: list[Package] = self.feed_client.get_packages(
-                feed.id,
-                project=self.project_id,
-                include_all_versions=True,
-            )
-
-            if not artifacts:
-                return None
-
+        else:
             release_versions = [
                 v
-                for v in artifacts[0].versions or []
+                for v in pkg.versions or []
                 if v.views
-                and any(getattr(view, "type", None) == "release" for view in v.views)
+                and any(
+                    view.name == RELEASE and getattr(view, "type", None) == "release"
+                    for view in v.views
+                )
             ]
 
-            latest = max(release_versions, key=lambda v: v.version)
+        latest = max(release_versions, key=lambda v: v.version)
 
-            return ADORelease(release=latest)
-            # raise ADOApiNotFoundError(
-            #     f"Could not find releases for {self.package_name} on Azure DevOps"
-            # )
+        version = self.feed_client.get_package_version(
+            self.feed_name, pkg.id, latest.id, project=self.project_id, is_deleted=False
+        )
+
+        return ADORelease(release=version)
+
+    def get_latest_prerelease(self) -> Optional[ADORelease]:
+        """Fetches the latest prerelease from the repository."""
+        try:
+            return self.get_latest_artifact(prerelease=True)
+        except AzureDevOpsServiceError:
+            raise ADOApiNotFoundError(
+                f"Could not find releases for {self.package_name} on Azure DevOps"
+            )
