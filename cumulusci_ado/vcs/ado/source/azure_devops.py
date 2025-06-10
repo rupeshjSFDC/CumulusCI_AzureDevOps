@@ -1,4 +1,6 @@
-from cumulusci.utils.yaml.cumulusci_yml import VCSSourceModel
+from typing import Optional, Type
+
+from cumulusci.utils.yaml.cumulusci_yml import VCSSourceModel, VCSSourceRelease
 from cumulusci.vcs.vcs_source import VCSSource
 
 
@@ -19,6 +21,10 @@ class ADOSource(VCSSource):
 
     def __hash__(self):
         return hash((self.url, self.commit))
+
+    @classmethod
+    def source_model(cls) -> Type["ADOSourceModel"]:
+        return ADOSourceModel
 
     def get_vcs_service(self):
         from cumulusci_ado.vcs.ado.service import AzureDevOpsService
@@ -44,3 +50,19 @@ class ADOSource(VCSSource):
 
     def get_release_tag(self):
         return "tags/" + (self.spec.release or "")
+
+
+class ADOSourceModel(VCSSourceModel):
+    """For backward compatibility."""
+
+    azure_devops: str
+    release: Optional[VCSSourceRelease]
+    vcs: Optional[str]
+    url: Optional[str]
+
+    def __init__(self, **kwargs):
+        # For backward compatibility, we need to set the vcs and url attributes
+        # if they are not already set.
+        super().__init__(**kwargs)
+        self.vcs = "azure_devops"
+        self.url = kwargs.get("azure_devops", None)

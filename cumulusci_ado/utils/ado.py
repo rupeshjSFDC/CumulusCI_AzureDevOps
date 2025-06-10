@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 from urllib.parse import ParseResult, urlparse
 
 import colorama
+from cumulusci.core.config.project_config import BaseProjectConfig
 from cumulusci.core.exceptions import CumulusCIFailure
 from cumulusci.utils.git import EMPTY_URL_MESSAGE
 
@@ -142,7 +143,7 @@ def download_package(
     )
 
 
-def custom_to_semver(version_str: str) -> str:
+def custom_to_semver(version_str: str, project_config: BaseProjectConfig) -> str:
     """
     Converts a custom version string with an optional prerelease prefix and any separator
     to a valid SemVer 2.0 string, using named regex groups.
@@ -170,12 +171,16 @@ def custom_to_semver(version_str: str) -> str:
     major, minor, patch = parts[:3]
     build = parts[3] if len(parts) > 3 else None
 
+    project_build_prefix = (
+        "build" if project_config.project__custom__ado_build is None else prefix
+    )
+
     if prefix and build:
-        semver = f"{major}.{minor}.{patch}-build.{build}"
+        semver = f"{major}.{minor}.{patch}-{project_build_prefix}.{build}"
     elif prefix:
         semver = f"{major}.{minor}.{patch}-{prefix}"
     elif build:
-        semver = f"{major}.{minor}.{patch}-{build}"
+        semver = f"{major}.{minor}.{patch}-{project_build_prefix}.{build}"
     else:
         semver = f"{major}.{minor}.{patch}"
 

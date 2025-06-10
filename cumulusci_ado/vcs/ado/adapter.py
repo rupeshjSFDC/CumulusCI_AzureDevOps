@@ -8,13 +8,7 @@ from typing import Iterator, Optional, Tuple, Union
 
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsClientError, AzureDevOpsServiceError
-from azure.devops.v7_0.feed.models import (
-    Feed,
-    FeedView,
-    MinimalPackageVersion,
-    Package,
-    PackageVersion,
-)
+from azure.devops.v7_0.feed.models import Feed, FeedView, Package, PackageVersion
 from azure.devops.v7_0.git.git_client import GitClient
 from azure.devops.v7_0.git.models import (
     GitAnnotatedTag,
@@ -78,7 +72,11 @@ class ADOTag(AbstractGitTag):
     @property
     def sha(self) -> str:
         """Gets the SHA of the tag."""
-        return self.tag.object_id or "" if self.tag else ""
+        return (
+            self.tag.tagged_object.object_id or ""
+            if self.tag and self.tag.tagged_object
+            else ""
+        )
 
 
 class ADOComparison(AbstractComparison):
@@ -534,6 +532,11 @@ class ADORelease(AbstractRelease):
         """Gets the tag reference name of the release."""
         return "tags/" + self.tag_name
 
+    @property
+    def updateable(self) -> bool:
+        """Checks if the release is updateable."""
+        return True
+
 
 class ADORepository(AbstractRepo):
 
@@ -626,7 +629,11 @@ class ADORepository(AbstractRepo):
 
     @property
     def feed_name(self) -> str:
-        return f"{self.package_name} Feed".replace(" ", "-").lower()
+        fname = (
+            self.project_config.project__custom__ado_feedname
+            or f"{self.package_name} Feed"
+        )
+        return fname.replace(" ", "-").lower()
 
     @property
     def feed_client(self):
@@ -864,20 +871,25 @@ class ADORepository(AbstractRepo):
 
     def get_version_package(
         self, version_name: str
-    ) -> Tuple[Optional[MinimalPackageVersion], Optional[Package]]:
+    ) -> Tuple[Optional[PackageVersion], Optional[Package]]:
         """Fetches a version from the given repository."""
         pkg = self.get_package()
         if not pkg:
             return None, None
 
         # ADO does not allow version name to be alphanumeric, so we need to filter by version name
-        numeric_part = custom_to_semver(version_name)
+        numeric_part = custom_to_semver(version_name, self.project_config)
 
-        versions: list[MinimalPackageVersion] = [
-            version for version in pkg.versions or [] if version.version == numeric_part
+        versions: list[PackageVersion] = self.feed_client.get_package_versions(
+            self.feed_name, pkg.id, project=self.project_id
+        )
+
+        versions = [
+            version for version in versions or [] if version.version == numeric_part
         ]
         if not versions:
             return None, pkg
+
         return versions[0], pkg
 
     def release_from_tag(self, tag_name: str) -> ADORelease:
@@ -982,16 +994,24 @@ class ADORepository(AbstractRepo):
             )
 
         try:
-            numeric_part = custom_to_semver(tag_name)
+            numeric_part = custom_to_semver(tag_name, self.project_config)
 
-            self.publish_repo_package(
-                feed,
-                numeric_part,
-                description=json.dumps({"tag_name": tag_name, "body": body}),
-            )
-
-            self._package = None
             version, pkg = self.get_version_package(tag_name)
+
+            if version is None:
+                self.publish_repo_package(
+                    feed,
+                    numeric_part,
+                    description=json.dumps({"tag_name": tag_name, "body": body}),
+                )
+
+                self._package = None
+                version, pkg = self.get_version_package(tag_name)
+
+                if pkg and version:
+                    release: PackageVersion = self.feed_client.get_package_version(
+                        feed.id, pkg.id, version.id, project=self.project_id
+                    )
 
             if not pkg:
                 raise ADOApiNotFoundError(
@@ -1002,10 +1022,6 @@ class ADORepository(AbstractRepo):
                 raise ADOApiNotFoundError(
                     f"Version {tag_name} not found for package {self.package_name}"
                 )
-
-            release: PackageVersion = self.feed_client.get_package_version(
-                feed.id, pkg.id, version.id, project=self.project_id
-            )
 
             if draft:
                 return ADORelease(release=release, tag_name=tag_name)
@@ -1081,7 +1097,7 @@ class ADORepository(AbstractRepo):
             return self.get_latest_artifact()
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
-                f"Could not find releases for {self.package_name} on Azure DevOps"
+                f"Could not find latest release for {self.package_name} on Azure DevOps"
             )
 
     def has_issues(self) -> bool:
@@ -1149,7 +1165,7 @@ class ADORepository(AbstractRepo):
             contents = {}
             for item in items:
                 name = item.path.split("/")[-1]
-                if name == subfolder:
+                if name == subfolder.split("/")[-1]:
                     continue
                 contents[
                     name
@@ -1215,7 +1231,10 @@ class ADORepository(AbstractRepo):
                 )
             ]
 
-        latest = max(release_versions, key=lambda v: v.version)
+        if any(release_versions):
+            latest = max(release_versions, key=lambda v: v.version)
+        else:
+            return None
 
         version = self.feed_client.get_package_version(
             self.feed_name, pkg.id, latest.id, project=self.project_id, is_deleted=False
@@ -1229,5 +1248,5 @@ class ADORepository(AbstractRepo):
             return self.get_latest_artifact(prerelease=True)
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
-                f"Could not find releases for {self.package_name} on Azure DevOps"
+                f"Could not find lastest release for {self.package_name} on Azure DevOps"
             )

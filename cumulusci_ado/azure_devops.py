@@ -1,5 +1,8 @@
+from cumulusci.core.utils import import_global
 from cumulusci.plugins import PluginBase
 from cumulusci.vcs.vcs_source import VCSSource
+
+import_global("cumulusci_ado.vcs.ado.service.AzureDevOpsService")
 
 VCSSource.register(
     "azure_devops", "cumulusci_ado.vcs.ado.source.azure_devops.ADOSource"

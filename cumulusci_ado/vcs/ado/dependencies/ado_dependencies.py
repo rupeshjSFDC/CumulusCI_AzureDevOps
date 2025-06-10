@@ -8,6 +8,7 @@ from cumulusci.core.dependencies.dependencies import (
     add_dependency_pin_class,
 )
 from cumulusci.core.exceptions import DependencyResolutionError
+from cumulusci.vcs.bootstrap import get_remote_project_config
 from pydantic import root_validator
 from pydantic.networks import AnyUrl
 
@@ -34,6 +35,10 @@ def get_ado_repo(project_config, url) -> ADORepository:
         repo = vcs_service.get_repository(options={"repository_url": url})
         if not repo:
             raise ADOApiNotFoundError(f"Get ADO Repository found None. {url}")
+
+        # project_config is local configuration, we need the repo config on the remote.
+        repo.project_config = get_remote_project_config(repo, repo.default_branch)
+
         return repo
     except ADOApiNotFoundError as e:
         raise DependencyResolutionError(

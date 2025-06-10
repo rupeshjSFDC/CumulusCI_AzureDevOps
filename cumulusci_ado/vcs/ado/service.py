@@ -1,4 +1,4 @@
-from typing import Optional, Type
+from typing import List, Optional, Type
 
 import requests
 from azure.devops.connection import Connection
@@ -111,7 +111,7 @@ class AzureDevOpsService(VCSService):
         # Check when connecting to server, but not when creating new service as this would always catch
         if azure_url is not None and list(service_by_host.keys()).count(azure_url) == 0:
             project_config.logger.debug(
-                f"No Azure DevOps service configured for domain {azure_url}."
+                f"No Azure DevOps service configured for domain {azure_url} : {url}."
             )
             return None
 
@@ -126,7 +126,7 @@ class AzureDevOpsService(VCSService):
             repository_url=url,
         )
         project_config.logger.info(
-            f"Azure DevOps service configured for domain {host}."
+            f"Azure DevOps service configured for domain {host} : {url}."
         )
         return vcs_service
 
@@ -148,6 +148,10 @@ class AzureDevOpsService(VCSService):
             )
             self._repo._init_repo()
         return self._repo
+
+    def parse_repo_url(self) -> List[str]:
+        owner, repo_name, host, project = parse_repo_url(self.repo_url)
+        return [host or "", owner or "", repo_name or "", project or ""]
 
     def get_committer(self, repo: ADORepository) -> CommitDir:
         """Returns the committer for the Azure DevOps repository."""
