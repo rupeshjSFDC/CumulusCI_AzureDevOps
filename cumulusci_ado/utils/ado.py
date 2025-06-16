@@ -1,9 +1,16 @@
 import logging
+import os
 import re
+import sys
 from typing import Optional, Tuple
 from urllib.parse import ParseResult, urlparse
 
-import colorama
+try:
+    import colorama
+except ImportError:
+    # coloredlogs only installs colorama on Windows
+    pass
+
 from cumulusci.core.config.project_config import BaseProjectConfig
 from cumulusci.core.exceptions import CumulusCIFailure
 from cumulusci.utils.git import EMPTY_URL_MESSAGE
@@ -79,7 +86,8 @@ def publish_package(
     :param path: Directory containing the package contents.
     :type path: str
     """
-    colorama.init()  # Needed for humanfriendly spinner to display correctly
+    if os.name == "nt" and "colorama" in sys.modules:  # pragma: no cover
+        colorama.init()  # Needed for humanfriendly spinner to display correctly
 
     if scope == "project":
         if project is None:
@@ -124,7 +132,8 @@ def download_package(
     :param file_filter: Wildcard filter for file download.
     :type file_filter: str
     """
-    colorama.init()  # Needed for humanfriendly spinner to display correctly
+    if os.name == "nt" and "colorama" in sys.modules:  # pragma: no cover
+        colorama.init()  # Needed for humanfriendly spinner to display correctly
 
     if scope == "project":
         if project is None:
