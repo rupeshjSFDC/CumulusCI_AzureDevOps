@@ -10,11 +10,12 @@ license = { text = "BSD 3-Clause License" }
 authors = [{name = "Rupesh J"}]
 requires-python = ">=3.11"
 dependencies = [
-    "cumulusci>=4.3.0.dev0",
+    "cumulusci>=5.0.0.dev0",
     "azure-devops",
     "requests",
     "humanfriendly",
-    "distro"
+    "distro",
+    "packaging>=23.0"
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

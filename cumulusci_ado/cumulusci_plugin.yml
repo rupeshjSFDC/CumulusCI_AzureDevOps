@@ -1,3 +1,16 @@
+plugins:
+  azure_devops:
+    # Azure DevOps Plugin Configuration
+    name: Azure DevOps Plugin
+    version: 1.0
+    description: Plugin for Azure DevOps integration
+    author: Rupesh J
+
+    # Plugin specific configuration
+    config:
+      # Azure DevOps specific configuration
+      api_version: "7.0"
+      default_organization: ""
 services:
   azure_devops:
     description: Configure connection for Azure DevOps Server
