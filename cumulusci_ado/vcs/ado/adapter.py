@@ -203,7 +203,7 @@ class ADOBranch(AbstractBranch):
     def get_branch(self) -> None:
         try:
             self.branch = self.repo.git_client.get_branch(
-                self.repo.id, self.name, self.repo.project_id
+                self.repo.id, self.name.lstrip("refs/heads/"), self.repo.project_id
             )
         except AzureDevOpsServiceError as e:
             e.message = f"Branch {self.name} not found. {e.message}"
