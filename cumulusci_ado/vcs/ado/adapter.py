@@ -24,6 +24,8 @@ from azure.devops.v7_0.git.models import (
     GitPullRequestSearchCriteria,
     GitRef,
     GitRepository,
+    GitStatus,
+    GitStatusContext,
     GitTargetVersionDescriptor,
     GitVersionDescriptor,
     TeamProjectReference,
@@ -145,16 +147,29 @@ class ADOCommit(AbstractRepoCommit):
         self._sha = (
             self.commit.commit_id or "" if self.commit else kwargs.get("sha", "")
         )
+        self.git_client: Optional[GitClient] = kwargs.get("git_client")
+        self.repo_id = kwargs.get("repo_id")
+        self.project_id = kwargs.get("project_id")
 
     def get_statuses(self, context: str, regex_match: Pattern[str]) -> Optional[str]:
         """
         Returns the first regex group from the description of a successful status with the given context name.
         """
-        if not hasattr(self, "statuses") or self.commit.statuses is None:
+        if (
+            not self.sha
+            or self.git_client is None
+            or self.repo_id is None
+            or self.project_id is None
+        ):
             return None
-        for status in self.commit.statuses:
+
+        statuses = self.git_client.get_statuses(
+            self.sha, self.repo_id, self.project_id, latest_only=True
+        )
+
+        for status in statuses:
             if (
-                status.state == "success"
+                status.state == "succeeded"
                 and getattr(status.context, "name", None) == context
             ):
                 search_match = regex_match.search(status.description)
@@ -844,7 +859,12 @@ class ADORepository(AbstractRepo):
             commit: GitCommit = self.git_client.get_commit(
                 commit_sha, self.id, project=self.project_id
             )
-            return ADOCommit(commit=commit)
+            return ADOCommit(
+                commit=commit,
+                git_client=self.git_client,
+                repo_id=self.id,
+                project_id=self.project_id,
+            )
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
                 f"Could not find commit {commit_sha} on Azure DevOps"
@@ -1249,4 +1269,41 @@ class ADORepository(AbstractRepo):
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
                 f"Could not find lastest release for {self.package_name} on Azure DevOps"
+            )
+
+    def create_commit_status(
+        self,
+        commit_id: str,
+        context: str,
+        state: str,
+        description: str,
+        target_url: str,
+    ) -> ADOCommit:
+        """Creates a commit status in the repository."""
+        try:
+            ctx = GitStatusContext(
+                genre="cumulusci",
+                name=context,
+            )
+
+            git_status = GitStatus(
+                context=ctx,
+                state=state,
+                description=description,
+                target_url=target_url,
+            )
+
+            status = self.git_client.create_commit_status(
+                git_status, commit_id, self.id, self.project_id
+            )
+
+            if not status:
+                raise AzureDevOpsServiceError(
+                    f"Failed to create commit status for {commit_id} on Azure DevOps"
+                )
+
+            return self.get_commit(commit_id)
+        except AzureDevOpsServiceError as e:
+            raise ADOApiNotFoundError(
+                f"Could not create commit status for {commit_id} on Azure DevOps: {str(e)}"
             )

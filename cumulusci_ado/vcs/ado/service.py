@@ -104,7 +104,9 @@ class AzureDevOpsService(VCSService):
                 cls.service_type,
             )
 
-        service_by_host = {service.url: service for service in configured_services}
+        service_by_host = {
+            service.url.rstrip("/"): service for service in configured_services
+        }
 
         azure_url = f"{host}/{_owner}"
 
