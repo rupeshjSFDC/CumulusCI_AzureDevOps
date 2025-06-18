@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 import time
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
@@ -88,7 +87,14 @@ class ADOComparison(AbstractComparison):
 
     def get_comparison(self) -> None:
         """Gets the comparison object for the current base and head."""
-        # self.comparison = self.repo.repo.compare_commits(self.base, self.head)
+        if self.base == self.head:
+            self.commit_diffs = GitCommitDiffs(
+                changes=[],
+                ahead_count=0,
+                behind_count=0,
+            )
+            return
+
         base_version_descriptor = GitBaseVersionDescriptor(
             self.base,
             version_type="commit",
@@ -104,6 +110,7 @@ class ADOComparison(AbstractComparison):
                 target_version_type="branch",
             )
         )
+
         try:
             self.commit_diffs = self.repo.git_client.get_commit_diffs(
                 self.repo.id,
@@ -199,19 +206,13 @@ class ADOBranch(AbstractBranch):
     branch: Optional[GitBranchStats]
 
     def __init__(self, repo: "ADORepository", branch_name: str, **kwargs) -> None:
+        branch_name = self.__class__.sanitize_branch_name(branch_name)
         super().__init__(repo, branch_name, **kwargs)
 
     def get_branch(self) -> None:
         try:
-            prefixname = "refs/heads/"
-            strp_name = (
-                self.name[len(prefixname) :]
-                if sys.version_info <= (3, 8)
-                else self.name.removeprefix(prefixname)
-            )
-
             self.branch = self.repo.git_client.get_branch(
-                self.repo.id, strp_name, self.repo.project_id
+                self.repo.id, self.name, self.repo.project_id
             )
         except AzureDevOpsServiceError as e:
             e.message = f"Branch {self.name} not found. {e.message}"
@@ -227,7 +228,7 @@ class ADOBranch(AbstractBranch):
                 raise ValueError("Repository is not set. Cannot access its branches.")
 
             base_version_descriptor = GitVersionDescriptor(
-                source_branch, "none", "branch"
+                cls.sanitize_branch_name(source_branch or ""), "none", "branch"
             )
             branches: list[GitBranchStats] = ado_repo.git_client.get_branches(
                 ado_repo.repo.id, ado_repo.project_id, base_version_descriptor
@@ -264,6 +265,15 @@ class ADOBranch(AbstractBranch):
 
         return ADOCommit(commit=self.branch.commit) if self.branch else None
 
+    @classmethod
+    def sanitize_branch_name(cls, branch_name: str) -> str:
+        """Sanitizes the branch name to be used in URLs."""
+
+        if branch_name.startswith("refs/heads/"):
+            branch_name = branch_name[len("refs/heads/") :]
+
+        return branch_name
+
 
 class ADOPullRequest(AbstractPullRequest):
     """ADO pull request object for creating and managing pull requests."""
@@ -291,7 +301,8 @@ class ADOPullRequest(AbstractPullRequest):
         """Fetches all pull requests from the repository."""
         try:
             search_criteria = GitPullRequestSearchCriteria(
-                source_ref_name=f"refs/heads/{base}",
+                target_ref_name=f"refs/heads/{base}" if base else None,
+                source_ref_name=f"refs/heads/{head}" if head else None,
                 status="open",
                 repository_id=repo.id,
                 source_repository_id=repo.id,
@@ -327,12 +338,41 @@ class ADOPullRequest(AbstractPullRequest):
         maintainer_can_modify: Optional[bool] = False,
         options: Optional[dict] = {},
     ) -> "ADOPullRequest":
-        """Creates a pull request on the given repository."""
+        """Creates a pull request on the given repository.
+
+        Args:
+            repo: The ADO repository instance
+            title: Title of the pull request
+            base: Target branch name (where changes will be merged INTO)
+            head: Source branch name or commit ID (where changes come FROM)
+            body: Optional description of the pull request
+            maintainer_can_modify: Optional flag (not used in ADO)
+            options: Optional additional options
+
+        Returns:
+            ADOPullRequest: The created pull request object
+
+        Note:
+            If head is a commit ID (40-character hex string), the method will raise an error.
+            If no branch is found, it will attempt to use the commit ID directly,
+            though this may fail depending on Azure DevOps API limitations.
+        """
 
         try:
+            # Determine if head is a commit ID (SHA) or branch name
+            # Commit IDs are typically 40 character hexadecimal strings
+            is_head_commit = len(head) == 40 and all(
+                c in "0123456789abcdefABCDEF" for c in head
+            )
+            if is_head_commit:
+                raise AzureDevOpsServiceError("Head is a commit ID, not a branch name.")
+
+            source_ref_name = f"refs/heads/{head}"
+            target_ref_name = f"refs/heads/{base}"
+
             pull_request = GitPullRequest(
-                source_ref_name=f"refs/heads/{base}",
-                target_ref_name=f"refs/heads/{head}",
+                source_ref_name=source_ref_name,  # HEAD is the source (FROM)
+                target_ref_name=target_ref_name,  # BASE is the target (INTO)
                 title=title,
                 description=body,
             )
@@ -347,7 +387,7 @@ class ADOPullRequest(AbstractPullRequest):
                 f"Pull request created: #{created_pr.pull_request_id} - {created_pr.title}"
             )
 
-            return ADOPullRequest(repo=repo, pull_request=pull_request, options=options)
+            return ADOPullRequest(repo=repo, pull_request=created_pr, options=options)
         except AzureDevOpsServiceError as e:
             e.message = f"Failed to create pull request: {e.message}"
             raise AzureDevOpsServiceError(e)
@@ -363,12 +403,12 @@ class ADOPullRequest(AbstractPullRequest):
     @property
     def base_ref(self) -> str:
         """Gets the base reference of the pull request."""
-        return self.pull_request.source_ref_name or ""
+        return self.pull_request.target_ref_name or ""
 
     @property
     def head_ref(self) -> str:
         """Gets the head reference of the pull request."""
-        return self.pull_request.target_ref_name or ""
+        return self.pull_request.source_ref_name or ""
 
     def can_auto_merge(self) -> bool:
         """
@@ -787,12 +827,15 @@ class ADORepository(AbstractRepo):
         # # Fetches all branches from the given repository
         return ADOBranch.branches(self)
 
-    def compare_commits(self, branch_name: str, commit: str) -> ADOComparison:
+    def compare_commits(
+        self, branch_name: str, commit: str, source: str
+    ) -> ADOComparison:
         # # Compares the given branch with the given commit
-        return ADOComparison.compare(self, branch_name, commit)
+        branch = ADOBranch(self, branch_name=branch_name)
+        return ADOComparison.compare(self, branch.commit_id, commit)
 
     def merge(
-        self, base: str, head: str, message: str = ""
+        self, base: str, head: str, source: str, message: str = ""
     ) -> Union[ADOPullRequest, None]:
 
         body = (
@@ -801,9 +844,9 @@ class ADORepository(AbstractRepo):
         )
         created_pr: ADOPullRequest = self.create_pull(
             base=base,
-            head=head,
+            head=source,
             body=body,
-            title=f"Automerge {head} into {base}",
+            title=f"Automerge {source} into {base}",
             options=self.options,
         )
 
