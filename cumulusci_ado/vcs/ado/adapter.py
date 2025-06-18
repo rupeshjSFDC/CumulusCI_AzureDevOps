@@ -105,9 +105,9 @@ class ADOComparison(AbstractComparison):
         target_version_descriptor: GitTargetVersionDescriptor = (
             GitTargetVersionDescriptor(
                 self.head,
-                version_type="branch",
+                version_type="commit",
                 target_version=self.head,
-                target_version_type="branch",
+                target_version_type="commit",
             )
         )
 
