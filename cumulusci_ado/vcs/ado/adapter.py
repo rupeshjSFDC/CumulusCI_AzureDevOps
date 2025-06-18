@@ -45,7 +45,12 @@ from cumulusci.vcs.models import (
     AbstractRepoCommit,
 )
 
-from cumulusci_ado.utils.ado import custom_to_semver, parse_repo_url, publish_package
+from cumulusci_ado.utils.ado import (
+    custom_to_semver,
+    parse_repo_url,
+    publish_package,
+    sanitize_path_name,
+)
 from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 
 RELEASE = "Release"
@@ -206,7 +211,7 @@ class ADOBranch(AbstractBranch):
     branch: Optional[GitBranchStats]
 
     def __init__(self, repo: "ADORepository", branch_name: str, **kwargs) -> None:
-        branch_name = self.__class__.sanitize_branch_name(branch_name)
+        branch_name = sanitize_path_name(branch_name)
         super().__init__(repo, branch_name, **kwargs)
 
     def get_branch(self) -> None:
@@ -228,7 +233,7 @@ class ADOBranch(AbstractBranch):
                 raise ValueError("Repository is not set. Cannot access its branches.")
 
             base_version_descriptor = GitVersionDescriptor(
-                cls.sanitize_branch_name(source_branch or ""), "none", "branch"
+                sanitize_path_name(source_branch or ""), "none", "branch"
             )
             branches: list[GitBranchStats] = ado_repo.git_client.get_branches(
                 ado_repo.repo.id, ado_repo.project_id, base_version_descriptor
@@ -264,15 +269,6 @@ class ADOBranch(AbstractBranch):
             self.get_branch()
 
         return ADOCommit(commit=self.branch.commit) if self.branch else None
-
-    @classmethod
-    def sanitize_branch_name(cls, branch_name: str) -> str:
-        """Sanitizes the branch name to be used in URLs."""
-
-        if branch_name.startswith("refs/heads/"):
-            branch_name = branch_name[len("refs/heads/") :]
-
-        return branch_name
 
 
 class ADOPullRequest(AbstractPullRequest):
@@ -403,12 +399,12 @@ class ADOPullRequest(AbstractPullRequest):
     @property
     def base_ref(self) -> str:
         """Gets the base reference of the pull request."""
-        return self.pull_request.target_ref_name or ""
+        return sanitize_path_name(self.pull_request.target_ref_name or "")
 
     @property
     def head_ref(self) -> str:
         """Gets the head reference of the pull request."""
-        return self.pull_request.source_ref_name or ""
+        return sanitize_path_name(self.pull_request.source_ref_name or "")
 
     def can_auto_merge(self) -> bool:
         """
@@ -476,32 +472,77 @@ class ADOPullRequest(AbstractPullRequest):
             ),
         )
 
-        self.update(completion_options=completion_options)
+        # Set auto-complete with completion options
+        self.set_auto_complete(completion_options)
 
-    def update(
-        self,
-        completion_options: Optional[GitPullRequestCompletionOptions] = None,
-        status: Optional[str] = None,
+    def set_auto_complete(
+        self, completion_options: GitPullRequestCompletionOptions
     ) -> None:
+        """Sets the pull request to auto-complete with the specified completion options."""
 
-        self.pull_request.auto_complete_set_by = self.pull_request.created_by
-
-        if completion_options:
-            self.pull_request.completion_options = completion_options
-
-        if status:
-            self.pull_request.status = status
+        # Create a minimal update object with only auto-complete fields
+        auto_complete_update = GitPullRequest()
+        auto_complete_update.auto_complete_set_by = self.pull_request.created_by
+        auto_complete_update.completion_options = completion_options
 
         try:
             updated_pr = self.repo.git_client.update_pull_request(
-                git_pull_request_to_update=self.pull_request,
+                git_pull_request_to_update=auto_complete_update,
                 repository_id=self.repo.id,
                 pull_request_id=self.number,
                 project=self.repo.project_id,
             )
             self.repo.logger.info(
-                f"Pull request #{updated_pr.pull_request_id} updated successfully."
+                f"Pull request #{updated_pr.pull_request_id} set to auto-complete."
             )
+            # Update our local pull request object with the returned values
+            self.pull_request = updated_pr
+        except AzureDevOpsServiceError as e:
+            e.message = f"Failed to set auto-complete on pull request #{self.number}: {e.message}"
+            raise AzureDevOpsServiceError(e)
+        except Exception as ex:
+            message = f"Unexpected error during setting auto-complete: {str(ex)}"
+            raise Exception(message)
+
+    def update(
+        self,
+        completion_options: Optional[GitPullRequestCompletionOptions] = None,
+        status: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> None:
+        """Updates the pull request with allowed fields only."""
+
+        # Handle auto-complete separately from other updates
+        if completion_options:
+            self.set_auto_complete(completion_options)
+            return
+
+        # Create update object with only allowed fields (no auto-complete fields)
+        update_pr = GitPullRequest()
+
+        if status:
+            update_pr.status = status
+        if title:
+            update_pr.title = title
+        if description:
+            update_pr.description = description
+
+        # Only proceed if we have fields to update
+        if not any([status, title, description]):
+            return
+
+        try:
+            self.pull_request = self.repo.git_client.update_pull_request(
+                git_pull_request_to_update=update_pr,
+                repository_id=self.repo.id,
+                pull_request_id=self.number,
+                project=self.repo.project_id,
+            )
+            self.repo.logger.info(
+                f"Pull request #{self.pull_request.pull_request_id} updated successfully."
+            )
+
         except AzureDevOpsServiceError as e:
             e.message = f"Failed to update pull request #{self.number}: {e.message}"
             raise AzureDevOpsServiceError(e)
@@ -625,6 +666,7 @@ class ADORepository(AbstractRepo):
         self._tooling = None
         self._feed_client = None
         self._package: Optional[Package] = None
+        self._existing_prs = None
 
     def _init_repo(self) -> None:
         """Initializes the repository object."""
@@ -842,6 +884,14 @@ class ADORepository(AbstractRepo):
             message + "\nThis pull request was automatically generated because "
             "an automated merge hit a merge conflict"
         )
+
+        # Get open PRs for this source
+        if base in self._get_existing_prs(source):
+            self.logger.info(
+                f"Pull request already exists for {source} into {base}. Skipping merge."
+            )
+            return None
+
         created_pr: ADOPullRequest = self.create_pull(
             base=base,
             head=source,
@@ -857,6 +907,21 @@ class ADORepository(AbstractRepo):
         else:
             self.logger.info(f"Merge conflict on branch {base}: Pull request created")
         return created_pr
+
+    def _get_existing_prs(self, source_branch):
+        """Returns the existing pull requests from the source branch
+        to other branches that are candidates for merging."""
+        if self._existing_prs is not None:
+            return self._existing_prs
+
+        self._existing_prs = []
+        for pr in self.pull_requests(state="active", head=source_branch):
+            if (
+                pr.base_ref.startswith(self.options.get("branch_prefix", ""))
+                and pr.head_ref == source_branch
+            ):
+                self._existing_prs.append(pr.base_ref)
+        return self._existing_prs
 
     def pull_requests(
         self,

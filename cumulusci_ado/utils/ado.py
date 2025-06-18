@@ -194,3 +194,12 @@ def custom_to_semver(version_str: str, project_config: BaseProjectConfig) -> str
         semver = f"{major}.{minor}.{patch}"
 
     return semver
+
+
+def sanitize_path_name(path_name: str) -> str:
+    """Sanitizes the branch name to be used in URLs."""
+
+    if path_name.startswith("refs/heads/"):
+        path_name = path_name[len("refs/heads/") :]
+
+    return path_name
