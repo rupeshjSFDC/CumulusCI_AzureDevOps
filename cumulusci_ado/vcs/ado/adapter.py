@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
@@ -202,8 +203,15 @@ class ADOBranch(AbstractBranch):
 
     def get_branch(self) -> None:
         try:
+            prefixname = "refs/heads/"
+            strp_name = (
+                self.name[len(prefixname) :]
+                if sys.version_info <= (3, 8)
+                else self.name.removeprefix(prefixname)
+            )
+
             self.branch = self.repo.git_client.get_branch(
-                self.repo.id, self.name.lstrip("refs/heads/"), self.repo.project_id
+                self.repo.id, strp_name, self.repo.project_id
             )
         except AzureDevOpsServiceError as e:
             e.message = f"Branch {self.name} not found. {e.message}"
