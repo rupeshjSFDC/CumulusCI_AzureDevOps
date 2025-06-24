@@ -1,12 +1,31 @@
+plugins:
+  azure_devops:
+    # Azure DevOps Plugin Configuration
+    name: Azure DevOps Plugin
+    version: 1.0
+    description: Plugin for Azure DevOps integration
+    author: Rupesh J
+
+    # Plugin specific configuration
+    config:
+      # Azure DevOps specific configuration
+      api_version: "7.0"
+      default_organization: ""
 services:
   azure_devops:
     description: Configure connection for Azure DevOps Server
     attributes:
-      organization_url:
+      username:
+        description: The GitHub Enterprise username to use for tasks.
+        required: True
+      email:
+        description: The email address to used by GitHub tasks when an operation requires an email address.
+        required: True
+      url:
         description: "Azure DevOps organization url (Example: dev.azure.com/YOURORG)."
         required: True
       token:
         description: Personal Access Token
         required: True
         sensitive: True
-    class_path: cumulusci_ado.vcs.ado.service.AzureDevOpsService
+    # class_path: cumulusci_ado.vcs.ado.service.AzureDevOpsService
