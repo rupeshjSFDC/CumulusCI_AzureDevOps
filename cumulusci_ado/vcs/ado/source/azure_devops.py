@@ -27,9 +27,9 @@ class ADOSource(VCSSource):
         return ADOSourceModel
 
     def get_vcs_service(self):
-        from cumulusci_ado.vcs.ado.service import AzureDevOpsService
+        from cumulusci_ado.vcs.ado.service import get_ado_service_for_url
 
-        return AzureDevOpsService.get_service_for_url(self.project_config, self.url)
+        return get_ado_service_for_url(self.project_config, self.url)
 
     def _set_additional_repo_config(self):
         from cumulusci.vcs.bootstrap import get_remote_project_config

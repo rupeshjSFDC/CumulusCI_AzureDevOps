@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import List, Optional, Type
 
 import requests
@@ -15,6 +16,13 @@ from cumulusci_ado.vcs.ado.generator import (
     ADOParentPullRequestNotesGenerator,
     ADOReleaseNotesGenerator,
 )
+
+
+@lru_cache(50)
+def get_ado_service_for_url(project_config, url: str) -> Optional["AzureDevOpsService"]:
+    from cumulusci_ado.vcs.ado.service import AzureDevOpsService
+
+    return AzureDevOpsService.get_service_for_url(project_config, url)
 
 
 class AzureDevOpsService(VCSService):
@@ -91,7 +99,10 @@ class AzureDevOpsService(VCSService):
 
     @classmethod
     def get_service_for_url(
-        cls, project_config: BaseProjectConfig, url: str, options: dict = {}
+        cls,
+        project_config: BaseProjectConfig,
+        url: str,
+        service_alias: Optional[str] = None,
     ) -> Optional["AzureDevOpsService"]:
         """Returns the service configuration for the given URL."""
         _owner, _repo_name, host, project = parse_repo_url(url)
@@ -101,7 +112,7 @@ class AzureDevOpsService(VCSService):
         if project_config.keychain is not None:
             # Check if the service is already configured in the keychain
             configured_services = project_config.keychain.get_services_for_type(
-                cls.service_type,
+                cls.service_type
             )
 
         service_by_host = {

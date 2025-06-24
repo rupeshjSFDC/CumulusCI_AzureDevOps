@@ -1,5 +1,6 @@
 import logging
 from abc import ABC
+from functools import lru_cache
 from typing import Optional, Type
 
 import cumulusci.core.dependencies.base as base_dependency
@@ -21,12 +22,11 @@ logger = logging.getLogger(__name__)
 VCS_ADO = "azure_devops"
 
 
+@lru_cache(50)
 def get_ado_repo(project_config, url) -> ADORepository:
-    from cumulusci_ado.vcs.ado.service import AzureDevOpsService, VCSService
+    from cumulusci_ado.vcs.ado.service import VCSService, get_ado_service_for_url
 
-    vcs_service: Optional[VCSService] = AzureDevOpsService.get_service_for_url(
-        project_config, url
-    )
+    vcs_service: Optional[VCSService] = get_ado_service_for_url(project_config, url)
 
     if vcs_service is None:
         raise DependencyResolutionError(f"Could not find a ADO service for URL: {url}")
