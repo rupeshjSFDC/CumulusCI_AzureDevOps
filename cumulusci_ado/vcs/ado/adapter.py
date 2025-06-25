@@ -198,7 +198,7 @@ class ADOCommit(AbstractRepoCommit):
     @property
     def parents(self) -> list["ADOCommit"]:
         # TODO: Test this method
-        return [ADOCommit(**c) for c in self.commit.parents or []]
+        return [ADOCommit(sha=c) for c in self.commit.parents or []]
 
     @property
     def sha(self) -> str:
@@ -460,16 +460,12 @@ class ADOPullRequest(AbstractPullRequest):
 
         # Set PR to auto-complete and bypass rules
         completion_options = GitPullRequestCompletionOptions(
-            delete_source_branch=self.options.get(
-                "completion_opts_delete_source_branch", False
+            delete_source_branch=self.repo.config(
+                "completion_opts_delete_source_branch"
             ),
-            merge_strategy=self.options.get(
-                "completion_opts_merge_strategy", "squash"
-            ),  # 'noFastForward', 'rebase', 'rebaseMerge', etc.
-            bypass_policy=self.options.get("completion_opts_bypass_policy", False),
-            bypass_reason=self.options.get(
-                "completion_opts_bypass_reason", "Automated bypass for CI/CD pipeline"
-            ),
+            merge_strategy=self.repo.config("completion_opts_merge_strategy"),
+            bypass_policy=self.repo.config("completion_opts_bypass_policy"),
+            bypass_reason=self.repo.config("completion_opts_bypass_reason"),
         )
 
         # Set auto-complete with completion options
@@ -757,6 +753,12 @@ class ADORepository(AbstractRepo):
                 base_url="tooling",
             )
         return self._tooling
+
+    def config(self, key: str) -> Optional[Union[str, bool]]:
+        """Returns the plugin configuration for the ADO."""
+        return self.project_config.lookup(
+            f"plugins__azure_devops__config__{key}", default=None
+        )
 
     def get_ref(self, ref_sha: str) -> Optional[ADORef]:
         """Gets a Reference object for the tag with the given SHA"""

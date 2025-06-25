@@ -10,7 +10,10 @@ plugins:
     config:
       # Azure DevOps specific configuration
       api_version: "7.0"
-      default_organization: ""
+      completion_opts_delete_source_branch: False
+      completion_opts_merge_strategy: noFastForward # squash, rebase, rebaseMerge
+      completion_opts_bypass_policy: False
+      completion_opts_bypass_reason: Automated bypass for CI/CD pipeline
 services:
   azure_devops:
     description: Configure connection for Azure DevOps Server
@@ -29,3 +32,17 @@ services:
         required: True
         sensitive: True
     # class_path: cumulusci_ado.vcs.ado.service.AzureDevOpsService
+project:
+  git:
+    release_notes:
+      parsers:
+        azure_devops:
+          1:
+            class_path: cumulusci.tasks.release_notes.parser.ChangeNotesLinesParser
+            title: Critical Changes
+          2:
+            class_path: cumulusci.tasks.release_notes.parser.ChangeNotesLinesParser
+            title: Changes
+          3:
+            class_path: cumulusci.tasks.release_notes.parser.IssuesParser
+            title: Issues Closed
