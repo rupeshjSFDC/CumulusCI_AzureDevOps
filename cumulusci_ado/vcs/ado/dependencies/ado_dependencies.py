@@ -1,3 +1,4 @@
+import copy
 import logging
 from abc import ABC
 from functools import lru_cache
@@ -22,6 +23,29 @@ logger = logging.getLogger(__name__)
 VCS_ADO = "azure_devops"
 
 
+def _deep_merge_plugins(remote_plugins, project_plugins):
+    """
+    Deep merge project_plugins into remote_plugins, adding only missing keys.
+    Remote plugins take precedence, project plugins provide defaults for missing keys.
+    """
+    if not isinstance(remote_plugins, dict) or not isinstance(project_plugins, dict):
+        return remote_plugins
+
+    result = remote_plugins.copy()
+
+    for key, value in project_plugins.items():
+        if key not in result:
+            # Key doesn't exist in remote, add it from project
+            result[key] = copy.deepcopy(value)
+        elif isinstance(result[key], dict) and isinstance(value, dict):
+            # Both are dictionaries, recursively merge
+            result[key] = _deep_merge_plugins(result[key], value)
+        # If key exists in remote but types don't match or remote value is not dict,
+        # keep the remote value (remote takes precedence)
+
+    return result
+
+
 @lru_cache(50)
 def get_ado_repo(project_config, url) -> ADORepository:
     from cumulusci_ado.vcs.ado.service import VCSService, get_ado_service_for_url
@@ -37,7 +61,19 @@ def get_ado_repo(project_config, url) -> ADORepository:
             raise ADOApiNotFoundError(f"Get ADO Repository found None. {url}")
 
         # project_config is local configuration, we need the repo config on the remote.
-        repo.project_config = get_remote_project_config(repo, repo.default_branch)
+        remote_config = get_remote_project_config(repo, repo.default_branch)
+
+        # Remote config does not have the plugin configuration. Copying it from local it does not exist.
+        # Else update the missing key values.
+        if remote_config.plugins is None:
+            remote_config.config["plugins"] = project_config.plugins
+        else:
+            # Merge project plugins into remote plugins, keeping remote values for existing keys
+            remote_config.config["plugins"] = _deep_merge_plugins(
+                remote_config.config["plugins"], project_config.plugins
+            )
+
+        repo.project_config = remote_config
 
         return repo
     except ADOApiNotFoundError as e:

@@ -14,6 +14,8 @@ plugins:
       completion_opts_merge_strategy: noFastForward # squash, rebase, rebaseMerge
       completion_opts_bypass_policy: False
       completion_opts_bypass_reason: Automated bypass for CI/CD pipeline
+      organisation_artifact: True # When True artifacts are created at Organisation level otherwise, its project level.
+      organization_feed_name: Salesforce Packages # Applicable when organisation_artifact is True
 services:
   azure_devops:
     description: Configure connection for Azure DevOps Server
@@ -31,7 +33,6 @@ services:
         description: Personal Access Token
         required: True
         sensitive: True
-    # class_path: cumulusci_ado.vcs.ado.service.AzureDevOpsService
 project:
   git:
     release_notes:

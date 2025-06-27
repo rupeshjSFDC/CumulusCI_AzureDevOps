@@ -8,6 +8,7 @@ from typing import Iterator, Optional, Tuple, Union
 
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsClientError, AzureDevOpsServiceError
+from azure.devops.v7_0.feed.feed_client import FeedClient
 from azure.devops.v7_0.feed.models import Feed, FeedView, Package, PackageVersion
 from azure.devops.v7_0.git.git_client import GitClient
 from azure.devops.v7_0.git.models import (
@@ -31,6 +32,7 @@ from azure.devops.v7_0.git.models import (
     TeamProjectReference,
 )
 from azure.devops.v7_0.upack_api.models import JsonPatchOperation, PackageVersionDetails
+from azure.devops.v7_0.upack_api.upack_api_client import UPackApiClient
 from cumulusci.core.config.project_config import BaseProjectConfig
 from cumulusci.core.config.util import get_devhub_config
 from cumulusci.salesforce_api.utils import get_simple_salesforce_connection
@@ -660,7 +662,7 @@ class ADORepository(AbstractRepo):
         self._package_name = kwargs.get("package_name", "")
         self.api_version = kwargs.get("api_version", None)
         self._tooling = None
-        self._feed_client = None
+        self._feed_client: Optional[FeedClient] = None
         self._package: Optional[Package] = None
         self._existing_prs = None
 
@@ -730,17 +732,36 @@ class ADORepository(AbstractRepo):
 
     @property
     def feed_name(self) -> str:
-        fname = (
-            self.project_config.project__custom__ado_feedname
-            or f"{self.package_name} Feed"
-        )
+        if self.organisation_artifact:
+            fname: str = (
+                self.project_config.project__custom__ado_organisation_feedname
+                or str(self.config("organization_feed_name"))
+            )
+        else:
+            fname: str = (
+                self.project_config.project__custom__ado_project_feedname
+                or f"{self.package_name} Feed"
+            )
         return fname.replace(" ", "-").lower()
 
     @property
-    def feed_client(self):
+    def organisation_artifact(self) -> bool:
+        if (
+            self.project_config.project__custom__ado_organisation_artifact is None
+            and self.config("organisation_artifact")
+            or self.project_config.project__custom__ado_organisation_artifact
+        ):
+            return True
+        return False
+
+    @property
+    def feed_client(self) -> FeedClient:
         if self._feed_client is None:
             self._feed_client = self.connection.clients.get_feed_client()
-        return self._feed_client
+
+        if self._feed_client:
+            return self._feed_client
+        raise AzureDevOpsClientError("Unable to get Feed Client.")
 
     @property
     def tooling(self):
@@ -995,7 +1016,7 @@ class ADORepository(AbstractRepo):
 
         artifacts: list[Package] = self.feed_client.get_packages(
             self.feed_name,
-            project=self.project_id,
+            project=(None if self.organisation_artifact else self.project_id),
             package_name_query=self.package_name,
             include_description=True,
         )
@@ -1019,7 +1040,9 @@ class ADORepository(AbstractRepo):
         numeric_part = custom_to_semver(version_name, self.project_config)
 
         versions: list[PackageVersion] = self.feed_client.get_package_versions(
-            self.feed_name, pkg.id, project=self.project_id
+            self.feed_name,
+            pkg.id,
+            project=(None if self.organisation_artifact else self.project_id),
         )
 
         versions = [
@@ -1083,9 +1106,7 @@ class ADORepository(AbstractRepo):
         """Returns the full name of the repository."""
         return self.repo.name or "" if self.repo else ""
 
-    def publish_repo_package(
-        self, feed, tag_name: str, description: str, scope: str = "project"
-    ) -> None:
+    def publish_repo_package(self, feed, tag_name: str, description: str) -> None:
         """Publishes a package to the given feed."""
         repo_root = self.project_config.repo_root or "."
         force_app_path = os.path.join(repo_root, "force-app")
@@ -1103,9 +1124,9 @@ class ADORepository(AbstractRepo):
             tag_name,
             force_app_path,
             description=description,
-            scope=scope,
+            scope=("organization" if self.organisation_artifact else "project"),
             organization=f"https://{self._service_config.url if self._service_config else ''}",
-            project=self.project_id,
+            project=(None if self.organisation_artifact else self.project_id),
             detect=None,
         )
 
@@ -1123,12 +1144,14 @@ class ADORepository(AbstractRepo):
         """Creates a release on the given repository."""
         try:
             feed: Feed = self.feed_client.get_feed(
-                self.feed_name, project=self.project_id
+                self.feed_name,
+                project=(None if self.organisation_artifact else self.project_id),
             )
         except AzureDevOpsServiceError:
             feed_instance = Feed(name=self.feed_name)
             feed: Feed = self.feed_client.create_feed(
-                feed_instance, project=self.project_id
+                feed_instance,
+                project=(None if self.organisation_artifact else self.project_id),
             )
 
         try:
@@ -1148,7 +1171,12 @@ class ADORepository(AbstractRepo):
 
                 if pkg and version:
                     release: PackageVersion = self.feed_client.get_package_version(
-                        feed.id, pkg.id, version.id, project=self.project_id
+                        feed.id,
+                        pkg.id,
+                        version.id,
+                        project=(
+                            None if self.organisation_artifact else self.project_id
+                        ),
                     )
 
             if not pkg:
@@ -1171,13 +1199,15 @@ class ADORepository(AbstractRepo):
             )
             pkg_version_details = PackageVersionDetails(views=json_operation)
 
-            upack_api_client = self.connection.clients.get_upack_api_client()
+            upack_api_client: UPackApiClient = (
+                self.connection.clients.get_upack_api_client()
+            )
             upack_api_client.update_package_version(
                 pkg_version_details,
                 self.feed_name,
                 self.package_name,
                 numeric_part,
-                self.project_id,
+                (None if self.organisation_artifact else self.project_id),
             )
 
             release.views = [feed_view]
@@ -1196,13 +1226,17 @@ class ADORepository(AbstractRepo):
             feed_view_name = RELEASE
 
         feed_view = self.feed_client.get_feed_view(
-            feed.id, feed_view_name, project=self.project_id
+            feed.id,
+            feed_view_name,
+            project=(None if self.organisation_artifact else self.project_id),
         )
 
         if feed_view is None:
             feed_view = FeedView(name=feed_view_name, type="release")
             feed_view = self.feed_client.create_feed_view(
-                feed_view, feed.id, project=self.project_id
+                feed_view,
+                feed.id,
+                project=(None if self.organisation_artifact else self.project_id),
             )
 
         return feed_view
@@ -1212,7 +1246,7 @@ class ADORepository(AbstractRepo):
         try:
             artifacts: list[Package] = self.feed_client.get_packages(
                 self.feed_name,
-                project=self.project_id,
+                project=(None if self.organisation_artifact else self.project_id),
                 package_name_query=self.package_name,
                 include_all_versions=True,
             )
@@ -1375,7 +1409,11 @@ class ADORepository(AbstractRepo):
             return None
 
         version = self.feed_client.get_package_version(
-            self.feed_name, pkg.id, latest.id, project=self.project_id, is_deleted=False
+            self.feed_name,
+            pkg.id,
+            latest.id,
+            project=(None if self.organisation_artifact else self.project_id),
+            is_deleted=False,
         )
 
         return ADORelease(release=version)
