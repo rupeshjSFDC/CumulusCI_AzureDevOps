@@ -1,3 +1,4 @@
+## Gloabl plugin configuration. #DO NOT MODIFY
 plugins:
   azure_devops:
     # Azure DevOps Plugin Configuration
@@ -14,8 +15,8 @@ plugins:
       completion_opts_merge_strategy: noFastForward # squash, rebase, rebaseMerge
       completion_opts_bypass_policy: False
       completion_opts_bypass_reason: Automated bypass for CI/CD pipeline
-      organisation_artifact: True # When True artifacts are created at Organisation level otherwise, its project level.
-      organization_feed_name: Salesforce Packages # Applicable when organisation_artifact is True
+      organisation_artifact: False # When True artifacts are created at Organisation level otherwise, its project level.
+      feed_name: SF Project Packages # Default feed name for salesforce packages
 services:
   azure_devops:
     description: Configure connection for Azure DevOps Server
@@ -47,3 +48,5 @@ project:
           3:
             class_path: cumulusci.tasks.release_notes.parser.IssuesParser
             title: Issues Closed
+  #custom:
+  # ado_feedname: "Project Feed Name" #Enables project specific feednames.

@@ -733,14 +733,12 @@ class ADORepository(AbstractRepo):
     @property
     def feed_name(self) -> str:
         if self.organisation_artifact:
-            fname: str = (
-                self.project_config.project__custom__ado_organisation_feedname
-                or str(self.config("organization_feed_name"))
+            fname: str = self.project_config.project__custom__ado_feedname or str(
+                self.config("feed_name")
             )
         else:
-            fname: str = (
-                self.project_config.project__custom__ado_project_feedname
-                or f"{self.package_name} Feed"
+            fname: str = self.project_config.project__custom__ado_feedname or str(
+                self.config("feed_name")
             )
         return fname.replace(" ", "-").lower()
 
