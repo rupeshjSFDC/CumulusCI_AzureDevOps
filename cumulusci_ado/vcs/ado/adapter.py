@@ -792,8 +792,10 @@ class ADORepository(AbstractRepo):
                 top=1,
             )
 
-            if refs and refs[0].peeled_object_id:
-                commit = self.get_commit(refs[0].peeled_object_id)
+            if refs and (refs[0].peeled_object_id or refs[0].object_id):
+                commit = self.get_commit(
+                    refs[0].peeled_object_id or refs[0].object_id or ""
+                )
                 return ADORef(refs[0], sha=commit.sha)
 
             raise

@@ -48,5 +48,3 @@ project:
           3:
             class_path: cumulusci.tasks.release_notes.parser.IssuesParser
             title: Issues Closed
-  #custom:
-  # ado_feedname: "Project Feed Name" #Enables project specific feednames.
