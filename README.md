@@ -19,8 +19,8 @@ Add the plugin to your `cumulusci.yml`:
 
 ```yaml
 plugins:
-  cumulusci_ado:
-    path: cumulusci_ado
+  cciplus_ado:
+    path: cciplus_ado
 ```
 
 Or use via the CumulusCI CLI if installed as a package.
@@ -32,7 +32,7 @@ Or use via the CumulusCI CLI if installed as a package.
 
 ## License
 
-BSD 3-Clause License
+GNU General Public License v3.0
 
 ## Links
 
