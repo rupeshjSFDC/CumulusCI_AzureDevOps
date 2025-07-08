@@ -90,9 +90,9 @@ def install_package():
         print("✅ Installation completed successfully!")
         print("\nNext steps:")
         print("1. Verify installation: pipx list | grep cumulusci")
-        print(
-            "2. Check available commands: pipx run cumulusci-plus-azure-devops --help"
-        )
+        print("2. Check plugin status: cumulusci-ado status")
+        print("3. Or use the shorter alias: cci-ado status")
+        print("4. Get help: cumulusci-ado help")
         return True
     else:
         print("❌ Installation failed!")

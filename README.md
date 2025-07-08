@@ -36,18 +36,41 @@ pip install cumulusci-plus-azure-devops
 - **Conflict Warning**: This package is designed to work with `cumulusci-plus` (version 5.0.0+), not the original `cumulusci` package. Having both installed may cause conflicts.
 - **pipx vs pip**: We recommend using `pipx` for CLI tools as it provides better isolation and prevents dependency conflicts.
 - **Dependencies**: All required dependencies (including `cumulusci-plus`, `azure-devops`, etc.) are automatically installed.
+- **CLI Tools**: After installation, you'll have access to `cumulusci-ado` and `cci-ado` commands for plugin management.
 
 ## Usage
+
+### Plugin Management Commands
+
+After installation, you can use these commands to manage the plugin:
+
+```bash
+# Check plugin installation status
+cumulusci-ado status
+
+# Show version information
+cumulusci-ado version
+
+# Get help
+cumulusci-ado help
+
+# Short alias versions
+cci-ado status
+cci-ado version
+cci-ado help
+```
+
+### CumulusCI Integration
 
 Add the plugin to your `cumulusci.yml`:
 
 ```yaml
 plugins:
-  cciplus_ado:
-    path: cciplus_ado
+  azure_devops:
+    path: cumulusci_ado
 ```
 
-Or use via the CumulusCI CLI if installed as a package.
+Or use via the CumulusCI CLI if installed as a package. The plugin will automatically integrate with CumulusCI when installed.
 
 ## Development
 

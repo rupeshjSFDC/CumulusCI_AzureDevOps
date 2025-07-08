@@ -110,7 +110,8 @@ If you get this error:
 2. **Verify installation**:
 
    ```bash
-   pipx run cumulusci-plus-azure-devops --help
+   cumulusci-ado status
+   # Or use the short alias: cci-ado status
    ```
 
 3. **Reinstall if needed**:
@@ -146,8 +147,9 @@ After installation, verify everything works:
 # Check installation
 pipx list | grep cumulusci
 
-# Test the package
-pipx run cumulusci-plus-azure-devops --help
+# Test the CLI commands
+cumulusci-ado status
+cci-ado version
 
 # Check for conflicts (should show no warnings)
 python -c "import cumulusci_ado; print('Installation successful!')"

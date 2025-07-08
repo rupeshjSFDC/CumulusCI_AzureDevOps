@@ -35,6 +35,10 @@ Homepage = "https://github.com/jorgesolebur/CumulusCI_AzureDevOps"
 [project.entry-points."cumulusci.plugins"]
 azure_devops = "cumulusci_ado.azure_devops:AzureDevOpsPlugin"
 
+[project.scripts]
+cumulusci-ado = "cumulusci_ado.cli.ado:main"
+cci-ado = "cumulusci_ado.cli.ado:main"
+
 [tool.hatch.version]
 path = "cumulusci_ado/__about__.py"
 
