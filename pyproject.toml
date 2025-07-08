@@ -9,6 +9,7 @@ description = "A plugin for cumulusci plus supporting Azure DevOps"
 license = { text = "GNU General Public License v3.0" }
 authors = [{name = "Rupesh J"}]
 requires-python = ">=3.11"
+keywords = ["cumulusci", "salesforce", "azure devops"]
 dependencies = [
     "cumulusci-plus>=5.0.0",
     "azure-devops",
@@ -17,9 +18,12 @@ dependencies = [
     "distro",
     "packaging>=23.0"
 ]
+# These dependencies are automatically installed when using pip or pipx
+# For conflict prevention, see install.py script and INSTALLATION.md
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

@@ -9,9 +9,33 @@ A plugin for [CumulusCI](https://github.com/SFDO-Tooling/CumulusCI) supporting A
 
 ## Installation
 
+### Recommended Installation (with conflict checking)
+
+For the best experience, use our custom installation script that checks for conflicts:
+
 ```bash
-pip install cumulusci-azure-devops
+# Download and run the installation script
+curl -O https://raw.githubusercontent.com/jorgesolebur/CumulusCI_AzureDevOps/main/install.py
+python install.py
 ```
+
+### Manual Installation via pipx (recommended)
+
+```bash
+pipx install cumulusci-plus-azure-devops
+```
+
+### Manual Installation via pip
+
+```bash
+pip install cumulusci-plus-azure-devops
+```
+
+### Important Notes
+
+- **Conflict Warning**: This package is designed to work with `cumulusci-plus` (version 5.0.0+), not the original `cumulusci` package. Having both installed may cause conflicts.
+- **pipx vs pip**: We recommend using `pipx` for CLI tools as it provides better isolation and prevents dependency conflicts.
+- **Dependencies**: All required dependencies (including `cumulusci-plus`, `azure-devops`, etc.) are automatically installed.
 
 ## Usage
 
