@@ -1,4 +1,4 @@
-name: Publish and release cumulusci-plus-azure-devops
+name: Test Publish and release cumulusci-plus-azure-devops
 
 on:
   push:
@@ -27,4 +27,5 @@ jobs:
         env:
           HATCH_INDEX_USER: "__token__"
           HATCH_INDEX_AUTH: ${{ secrets.TEST_PYPI_TOKEN }}
-        run: hatch publish --repo https://test.pypi.org/legacy/
+          HATCH_INDEX_REPO: ${{ vars.HATCH_INDEX_REPO }}
+        run: hatch publish
