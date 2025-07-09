@@ -36,8 +36,6 @@ Homepage = "https://github.com/jorgesolebur/CumulusCI_AzureDevOps"
 azure_devops = "cumulusci_ado.azure_devops:AzureDevOpsPlugin"
 
 [project.scripts]
-cci = "cumulusci.cli.cci:main"
-snowfakery = "snowfakery.cli:main"
 cumulusci-ado = "cumulusci_ado.cli.ado:main"
 cci-ado = "cumulusci_ado.cli.ado:main"
 

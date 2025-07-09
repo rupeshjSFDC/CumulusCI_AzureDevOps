@@ -58,6 +58,48 @@ pipx install cumulusci-plus-azure-devops
 pip install cumulusci-plus-azure-devops
 ```
 
+## Upgrading
+
+### pipx Upgrade Limitations
+
+pipx has a known limitation: **it only upgrades the main package, not its dependencies**. This means running `pipx upgrade cumulusci-plus-azure-devops` may not update `cumulusci-plus`, `azure-devops`, or other dependencies to their latest versions.
+
+### Recommended Upgrade Method
+
+Use our custom upgrade script:
+
+```bash
+# Download and run the upgrade script
+curl -O https://raw.githubusercontent.com/jorgesolebur/CumulusCI_AzureDevOps/main/upgrade.py
+python upgrade.py
+```
+
+The script will:
+
+- Check current versions of all dependencies
+- Offer options for standard upgrade or force reinstall
+- Ensure dependencies are updated to latest versions
+- Verify successful upgrade
+- Provide clear feedback and next steps
+
+### Manual Upgrade Options
+
+```bash
+# Option 1: Standard upgrade (main package only)
+pipx upgrade cumulusci-plus-azure-devops
+
+# Option 2: Force reinstall (updates dependencies)
+pipx uninstall cumulusci-plus-azure-devops
+pipx install cumulusci-plus-azure-devops
+
+# Option 3: Check what needs upgrading
+python upgrade.py --check-only
+```
+
+### Why Force Reinstall is Sometimes Needed
+
+When dependencies have security updates or important bug fixes, you need to force reinstall to get the latest versions. The upgrade script makes this process seamless.
+
 ## Conflict Prevention
 
 ### The Problem
@@ -116,6 +158,25 @@ If you get this error:
 
 3. **Reinstall if needed**:
    ```bash
+   pipx uninstall cumulusci-plus-azure-devops
+   pipx install cumulusci-plus-azure-devops
+   ```
+
+### Dependencies Not Upgrading
+
+If dependencies seem outdated after `pipx upgrade`:
+
+1. **Check current versions**:
+
+   ```bash
+   python upgrade.py --check-only
+   ```
+
+2. **Force reinstall**:
+
+   ```bash
+   python upgrade.py --force-reinstall
+   # Or manually:
    pipx uninstall cumulusci-plus-azure-devops
    pipx install cumulusci-plus-azure-devops
    ```

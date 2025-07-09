@@ -81,23 +81,77 @@ def install_package():
     """Install the package using pipx."""
     print("\n🚀 Installing cumulusci-plus-azure-devops...")
 
-    # Install the package
-    result = run_command(
-        "pipx install cumulusci-plus-azure-devops", capture_output=False
+    # Ask user about installation preference
+    print("\nChoose installation method:")
+    print(
+        "1. Install main app then inject plugin (recommended) - enables plugin discovery"
     )
+    print("2. Install with --include-deps - includes dependency scripts")
+    print("3. Basic installation - Azure DevOps plugin only")
 
-    if result.returncode == 0:
-        print("✅ Installation completed successfully!")
-        print("\nNext steps:")
-        print("1. Verify installation: pipx list | grep cumulusci")
-        print("2. Check plugin status: cumulusci-ado status")
-        print("3. Or use the shorter alias: cci-ado status")
-        print("4. Get help: cumulusci-ado help")
-        return True
-    else:
-        print("❌ Installation failed!")
-        print("Please check the error messages above and try again.")
+    try:
+        choice = input("Choose option (1-3): ").strip()
+    except KeyboardInterrupt:
+        print("\n❌ Installation cancelled by user")
         return False
+
+    if choice == "1":
+        # Install main app then inject plugin
+        print("\n📦 Installing cumulusci-plus first...")
+        result = run_command("pipx install cumulusci-plus", capture_output=False)
+        if result.returncode != 0:
+            print("❌ Failed to install cumulusci-plus!")
+            return False
+
+        print("\n📦 Injecting cumulusci-plus-azure-devops into same environment...")
+        result = run_command(
+            "pipx inject cumulusci-plus cumulusci-plus-azure-devops --include-apps",
+            capture_output=False,
+        )
+
+        if result.returncode == 0:
+            print("✅ Installation completed successfully!")
+            print("\nAvailable commands:")
+            print("  From cumulusci-plus: cci, snowfakery")
+            print("  From azure-devops plugin: cumulusci-ado, cci-ado")
+            print("✅ Plugin is discoverable by CumulusCI!")
+            return True
+
+    elif choice == "2":
+        # Install with --include-deps
+        print("\n📦 Installing with dependency scripts...")
+        result = run_command(
+            "pipx install cumulusci-plus-azure-devops --include-deps",
+            capture_output=False,
+        )
+
+        if result.returncode == 0:
+            print("✅ Installation completed successfully!")
+            print("\nAvailable commands:")
+            print("  From cumulusci-plus: cci, snowfakery")
+            print("  From azure-devops plugin: cumulusci-ado, cci-ado")
+            print("✅ Plugin is discoverable by CumulusCI!")
+            return True
+
+    else:
+        # Basic installation
+        print("\n📦 Installing basic package...")
+        result = run_command(
+            "pipx install cumulusci-plus-azure-devops", capture_output=False
+        )
+
+        if result.returncode == 0:
+            print("✅ Installation completed successfully!")
+            print("\nAvailable commands:")
+            print("  From azure-devops plugin: cumulusci-ado, cci-ado")
+            print("\n💡 To get cci and snowfakery commands:")
+            print("   pipx install cumulusci-plus")
+            print("⚠️  Note: Plugin may not be discoverable by CumulusCI in this mode")
+            return True
+
+    print("❌ Installation failed!")
+    print("Please check the error messages above and try again.")
+    return False
 
 
 def main():

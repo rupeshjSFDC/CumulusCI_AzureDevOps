@@ -1,4 +1,4 @@
-name: Publish and release cumulusci-azure-devops
+name: Publish and release cumulusci-plus-azure-devops
 
 on:
   push:
@@ -26,5 +26,5 @@ jobs:
       - name: Publish to PyPI
         env:
           HATCH_INDEX_USER: "__token__"
-          HATCH_INDEX_AUTH: ${{ secrets.PYPI_TOKEN }}
+          HATCH_INDEX_AUTH: ${{ secrets.TEST_PYPI_TOKEN }}
         run: hatch publish
